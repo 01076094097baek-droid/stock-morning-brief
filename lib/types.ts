@@ -80,11 +80,24 @@ export interface WeeklyIssues {
 // 캡처 슬롯
 export type CaptureSlot = "morning" | "midday" | "close";
 
+export interface CaptureAnalysis {
+  stockName?: string;      // 추출된 종목명
+  currentPrice?: string;   // 현재가 (예: "75,400원", "$182.50")
+  changeRate?: string;     // 등락률 (예: "+1.23%", "-0.85%")
+  avgPrice?: string;       // 평단가
+  returnRate?: string;     // 수익률 (예: "+15.3%", "-5.2%")
+  evaluationAmount?: string; // 평가금액
+  quantity?: string;       // 보유수량
+  analysisText?: string;   // AI 한줄 분석
+  appType?: string;        // 인식된 앱 (예: "키움증권", "Robinhood")
+}
+
 export interface Capture {
   slot: CaptureSlot;
-  imageData: string; // base64
+  imageData: string; // base64 (압축)
   uploadedAt: string;
-  analysis?: string;
+  analysis?: CaptureAnalysis;
+  analyzing?: boolean;
 }
 
 export interface StockCaptures {

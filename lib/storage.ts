@@ -204,3 +204,43 @@ export function saveCapture(
   };
   localStorage.setItem(key, JSON.stringify(captures));
 }
+
+export function saveCaptureAnalysis(
+  date: string,
+  stockId: string,
+  slot: string,
+  analysis: import("./types").CaptureAnalysis
+): void {
+  if (!isBrowser()) return;
+  const key = `${STORAGE_KEYS.CAPTURES}_${date}`;
+  const captures = getCaptures(date);
+  const stockCapture = captures.find((c) => c.stockId === stockId);
+  if (!stockCapture) return;
+  const capture = (stockCapture.captures as Record<string, import("./types").Capture>)[slot];
+  if (!capture) return;
+  capture.analysis = analysis;
+  capture.analyzing = false;
+  localStorage.setItem(key, JSON.stringify(captures));
+}
+
+export function getCapturesByStock(date: string, stockId: string): import("./types").StockCaptures | null {
+  const all = getCaptures(date);
+  return all.find((c) => c.stockId === stockId) ?? null;
+}
+
+// 모든 종목의 오늘 최신 캡처 분석 결과 요약 (브리핑용)
+export function getTodayCapturesSummary(date: string): Record<string, import("./types").CaptureAnalysis | null> {
+  const all = getCaptures(date);
+  const result: Record<string, import("./types").CaptureAnalysis | null> = {};
+  all.forEach((sc) => {
+    // 마감 > 장중 > 아침 순으로 최신 분석 우선
+    const priority: import("./types").CaptureSlot[] = ["close", "midday", "morning"];
+    let found: import("./types").CaptureAnalysis | null = null;
+    for (const slot of priority) {
+      const cap = sc.captures[slot];
+      if (cap?.analysis) { found = cap.analysis; break; }
+    }
+    result[sc.stockId] = found;
+  });
+  return result;
+}

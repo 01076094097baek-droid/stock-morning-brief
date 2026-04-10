@@ -6,7 +6,9 @@ import {
   getDailyBriefing,
   saveDailyBriefing,
   getStocks,
+  getTodayCapturesSummary,
 } from "@/lib/storage";
+import { getTodayString } from "@/lib/utils";
 import { DailyBriefing, Stock } from "@/lib/types";
 import {
   formatDate,
@@ -39,10 +41,11 @@ export default function BriefingTab({ onNavigate }: BriefingTabProps) {
     setError(null);
     try {
       const currentStocks = getStocks();
+      const capturesSummary = getTodayCapturesSummary(getTodayString());
       const res = await fetch("/api/generate-briefing", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ stocks: currentStocks }),
+        body: JSON.stringify({ stocks: currentStocks, capturesSummary }),
       });
       if (!res.ok) {
         const err = await res.json();
