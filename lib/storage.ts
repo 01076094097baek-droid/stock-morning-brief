@@ -9,9 +9,10 @@ import {
 // 인증
 const AUTH_KEY = "smb_pin_hash";
 const SESSION_KEY = "smb_session";
+const HINT_KEY = "smb_hint";
 
-async function hashPin(pin: string): Promise<string> {
-  const data = new TextEncoder().encode(pin + "smb_salt");
+async function sha256(text: string): Promise<string> {
+  const data = new TextEncoder().encode(text + "smb_salt");
   const buf = await crypto.subtle.digest("SHA-256", data);
   return Array.from(new Uint8Array(buf))
     .map((b) => b.toString(16).padStart(2, "0"))
@@ -24,7 +25,7 @@ export function hasPinSet(): boolean {
 }
 
 export async function setPin(pin: string): Promise<void> {
-  const hash = await hashPin(pin);
+  const hash = await sha256(pin);
   localStorage.setItem(AUTH_KEY, hash);
   sessionStorage.setItem(SESSION_KEY, "1");
 }
@@ -32,7 +33,7 @@ export async function setPin(pin: string): Promise<void> {
 export async function verifyPin(pin: string): Promise<boolean> {
   const stored = localStorage.getItem(AUTH_KEY);
   if (!stored) return false;
-  const hash = await hashPin(pin);
+  const hash = await sha256(pin);
   const ok = hash === stored;
   if (ok) sessionStorage.setItem(SESSION_KEY, "1");
   return ok;
@@ -50,6 +51,58 @@ export function lockSession(): void {
 
 export async function resetPin(oldPin: string, newPin: string): Promise<boolean> {
   const ok = await verifyPin(oldPin);
+  if (!ok) return false;
+  await setPin(newPin);
+  return true;
+}
+
+// 힌트 질문/답변
+export interface HintData {
+  question: string;
+  answerHash: string;
+}
+
+export async function setHint(question: string, answer: string): Promise<void> {
+  const answerHash = await sha256(answer.trim().toLowerCase());
+  const data: HintData = { question, answerHash };
+  localStorage.setItem(HINT_KEY, JSON.stringify(data));
+}
+
+export function getHintQuestion(): string | null {
+  if (!isBrowser()) return null;
+  try {
+    const data = localStorage.getItem(HINT_KEY);
+    if (!data) return null;
+    return (JSON.parse(data) as HintData).question;
+  } catch {
+    return null;
+  }
+}
+
+export function hasHintSet(): boolean {
+  if (!isBrowser()) return false;
+  return !!localStorage.getItem(HINT_KEY);
+}
+
+export async function verifyHintAnswer(answer: string): Promise<boolean> {
+  if (!isBrowser()) return false;
+  try {
+    const data = localStorage.getItem(HINT_KEY);
+    if (!data) return false;
+    const { answerHash } = JSON.parse(data) as HintData;
+    const hash = await sha256(answer.trim().toLowerCase());
+    return hash === answerHash;
+  } catch {
+    return false;
+  }
+}
+
+// 힌트 답변으로 PIN 재설정
+export async function resetPinWithHint(
+  answer: string,
+  newPin: string
+): Promise<boolean> {
+  const ok = await verifyHintAnswer(answer);
   if (!ok) return false;
   await setPin(newPin);
   return true;

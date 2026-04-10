@@ -2,9 +2,9 @@
 
 import { useState, useEffect } from "react";
 import { Stock } from "@/lib/types";
-import { getStocks, addStock, removeStock, resetPin } from "@/lib/storage";
+import { getStocks, addStock, removeStock, resetPin, setHint, getHintQuestion } from "@/lib/storage";
 import { generateId, getCountryFlag, formatPrice } from "@/lib/utils";
-import { Plus, Trash2, Target, TrendingDown, KeyRound, ChevronDown, ChevronUp } from "lucide-react";
+import { Plus, Trash2, Target, TrendingDown, KeyRound, ChevronDown, ChevronUp, HelpCircle } from "lucide-react";
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 export default function StocksTab({ onLock }: { onLock?: () => void }) {
@@ -16,9 +16,16 @@ export default function StocksTab({ onLock }: { onLock?: () => void }) {
   const [oldPin, setOldPin] = useState("");
   const [newPin, setNewPin] = useState("");
   const [pinMsg, setPinMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [showHintSection, setShowHintSection] = useState(false);
+  const [hintVerifyPin, setHintVerifyPin] = useState("");
+  const [newHintQ, setNewHintQ] = useState("");
+  const [newHintA, setNewHintA] = useState("");
+  const [hintMsg, setHintMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [currentHintQ, setCurrentHintQ] = useState<string | null>(null);
 
   useEffect(() => {
     setStocks(getStocks());
+    setCurrentHintQ(getHintQuestion());
   }, []);
 
   function handleCountryChange(country: "KR" | "US") {
@@ -244,6 +251,74 @@ export default function StocksTab({ onLock }: { onLock?: () => void }) {
                 className="w-full py-2 rounded-lg bg-violet-600 text-white text-sm font-medium"
               >
                 PIN 변경
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* 힌트 질문 변경 섹션 */}
+        <div className="border border-gray-100 rounded-xl overflow-hidden">
+          <button
+            onClick={() => { setShowHintSection(!showHintSection); setHintMsg(null); }}
+            className="w-full flex items-center justify-between px-4 py-3 bg-white active:bg-gray-50"
+          >
+            <div className="flex items-center gap-2 text-sm font-medium text-gray-700">
+              <HelpCircle size={15} className="text-gray-400" />
+              힌트 질문 {currentHintQ ? "변경" : "등록"}
+            </div>
+            {showHintSection ? <ChevronUp size={15} className="text-gray-400" /> : <ChevronDown size={15} className="text-gray-400" />}
+          </button>
+
+          {showHintSection && (
+            <div className="px-4 pb-4 border-t border-gray-50 pt-3 bg-white space-y-2">
+              {currentHintQ && (
+                <div className="bg-gray-50 rounded-lg px-3 py-2">
+                  <p className="text-xs text-gray-400 mb-0.5">현재 질문</p>
+                  <p className="text-sm text-gray-600 font-medium">{currentHintQ}</p>
+                </div>
+              )}
+              <input
+                type="password"
+                inputMode="numeric"
+                maxLength={4}
+                placeholder="현재 PIN 확인 (4자리)"
+                value={hintVerifyPin}
+                onChange={(e) => setHintVerifyPin(e.target.value.replace(/\D/g, "").slice(0, 4))}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-300 tracking-widest text-center"
+              />
+              <input
+                placeholder="새 힌트 질문"
+                value={newHintQ}
+                onChange={(e) => setNewHintQ(e.target.value)}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-300"
+              />
+              <input
+                placeholder="새 힌트 답변"
+                value={newHintA}
+                onChange={(e) => setNewHintA(e.target.value)}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-300"
+              />
+              {hintMsg && (
+                <p className={`text-xs text-center ${hintMsg.ok ? "text-emerald-600" : "text-red-500"}`}>
+                  {hintMsg.text}
+                </p>
+              )}
+              <button
+                onClick={async () => {
+                  if (hintVerifyPin.length !== 4) { setHintMsg({ ok: false, text: "PIN을 입력해주세요" }); return; }
+                  if (!newHintQ.trim() || !newHintA.trim()) { setHintMsg({ ok: false, text: "질문과 답변을 모두 입력해주세요" }); return; }
+                  const { verifyPin } = await import("@/lib/storage");
+                  const ok = await verifyPin(hintVerifyPin);
+                  if (!ok) { setHintMsg({ ok: false, text: "PIN이 올바르지 않습니다" }); setHintVerifyPin(""); return; }
+                  await setHint(newHintQ.trim(), newHintA.trim());
+                  setCurrentHintQ(newHintQ.trim());
+                  setHintMsg({ ok: true, text: "힌트 질문이 변경되었습니다" });
+                  setHintVerifyPin(""); setNewHintQ(""); setNewHintA("");
+                  setTimeout(() => { setShowHintSection(false); setHintMsg(null); }, 1500);
+                }}
+                className="w-full py-2 rounded-lg bg-violet-600 text-white text-sm font-medium"
+              >
+                저장
               </button>
             </div>
           )}
