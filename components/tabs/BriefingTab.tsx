@@ -1,0 +1,303 @@
+"use client";
+
+import { useState, useEffect } from "react";
+import { TabId } from "../AppShell";
+import {
+  getDailyBriefing,
+  saveDailyBriefing,
+  getStocks,
+} from "@/lib/storage";
+import { DailyBriefing, Stock } from "@/lib/types";
+import {
+  formatDate,
+  formatTime,
+  getJudgmentStyle,
+  getCountryFlag,
+  getStockTypeStyle,
+} from "@/lib/utils";
+import { RefreshCw, ChevronRight, AlertCircle } from "lucide-react";
+
+interface BriefingTabProps {
+  onNavigate: (tab: TabId, options?: { stockId?: string; query?: string }) => void;
+}
+
+export default function BriefingTab({ onNavigate }: BriefingTabProps) {
+  const [briefing, setBriefing] = useState<DailyBriefing | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [stocks, setStocks] = useState<Stock[]>([]);
+
+  useEffect(() => {
+    const s = getStocks();
+    setStocks(s);
+    const b = getDailyBriefing();
+    if (b) setBriefing(b);
+  }, []);
+
+  async function generateBriefing() {
+    setLoading(true);
+    setError(null);
+    try {
+      const currentStocks = getStocks();
+      const res = await fetch("/api/generate-briefing", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ stocks: currentStocks }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || "브리핑 생성 실패");
+      }
+      const data: DailyBriefing = await res.json();
+      saveDailyBriefing(data);
+      setBriefing(data);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "오류가 발생했습니다");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const today = new Date();
+
+  return (
+    <div className="tab-content">
+      {/* 헤더 */}
+      <div className="sticky top-0 bg-white border-b border-gray-100 px-4 py-3 z-10">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-xs text-gray-400">{formatDate(today)}</p>
+            {briefing && (
+              <p className="text-xs text-gray-400 mt-0.5">
+                생성: {formatTime(briefing.generatedAt)}
+              </p>
+            )}
+          </div>
+          <button
+            onClick={generateBriefing}
+            disabled={loading}
+            className="flex items-center gap-1.5 bg-violet-600 text-white text-sm font-medium px-3 py-1.5 rounded-full disabled:opacity-60 active:bg-violet-700 transition-colors"
+          >
+            <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
+            {loading ? "생성 중..." : "브리핑 생성"}
+          </button>
+        </div>
+      </div>
+
+      <div className="px-4 py-4 space-y-5">
+        {error && (
+          <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-xl p-3">
+            <AlertCircle size={16} className="text-red-500 mt-0.5 shrink-0" />
+            <p className="text-sm text-red-700">{error}</p>
+          </div>
+        )}
+
+        {!briefing && !loading && stocks.length === 0 && (
+          <EmptyState onNavigate={onNavigate} />
+        )}
+
+        {!briefing && !loading && stocks.length > 0 && (
+          <div className="text-center py-12">
+            <p className="text-gray-400 text-sm mb-3">아직 브리핑이 없어요</p>
+            <p className="text-gray-300 text-xs">위 버튼을 눌러 오늘 브리핑을 생성해보세요</p>
+          </div>
+        )}
+
+        {loading && <LoadingSkeleton />}
+
+        {briefing && !loading && (
+          <>
+            {/* 시장 요약 */}
+            <Section title="오늘 시장 요약">
+              <div className="bg-gray-50 rounded-xl p-4">
+                <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-line">
+                  {briefing.marketSummary}
+                </p>
+              </div>
+            </Section>
+
+            {/* 내 종목 오늘 결정 */}
+            {briefing.stockBriefings.length > 0 && (
+              <Section title="내 종목 오늘 결정">
+                <div className="space-y-3">
+                  {briefing.stockBriefings.map((sb) => {
+                    const style = getJudgmentStyle(sb.judgment);
+                    return (
+                      <button
+                        key={sb.stockId}
+                        onClick={() =>
+                          onNavigate("news", { stockId: sb.stockId })
+                        }
+                        className="w-full text-left bg-white border border-gray-100 rounded-xl p-4 shadow-sm active:bg-gray-50 transition-colors"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <span>{getCountryFlag(sb.country)}</span>
+                            <span className="font-semibold text-sm text-gray-900">
+                              {sb.stockName}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <span
+                              className={`text-xs font-medium px-2 py-0.5 rounded-full border ${style.bg} ${style.text} ${style.border}`}
+                            >
+                              {style.label}
+                            </span>
+                            <ChevronRight
+                              size={14}
+                              className="text-gray-300 shrink-0"
+                            />
+                          </div>
+                        </div>
+                        <p className="mt-2 text-xs text-gray-500 leading-relaxed line-clamp-2">
+                          {sb.summary}
+                        </p>
+                        {sb.newsPreview.length > 0 && (
+                          <div className="mt-2 space-y-1">
+                            {sb.newsPreview.slice(0, 2).map((n, i) => (
+                              <p
+                                key={i}
+                                className="text-xs text-gray-400 truncate"
+                              >
+                                · {n}
+                              </p>
+                            ))}
+                          </div>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </Section>
+            )}
+
+            {/* 오늘의 추천종목 */}
+            {briefing.recommendedStocks.length > 0 && (
+              <Section title="오늘의 추천종목">
+                <div className="space-y-3">
+                  {briefing.recommendedStocks.map((rec, i) => {
+                    const typeStyle = getStockTypeStyle(rec.type);
+                    return (
+                      <div
+                        key={i}
+                        className="bg-white border border-gray-100 rounded-xl p-4 shadow-sm"
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span>{getCountryFlag(rec.country)}</span>
+                            <span className="font-semibold text-sm text-gray-900">
+                              {rec.name}
+                            </span>
+                            <span className="text-xs text-gray-400">
+                              {rec.code}
+                            </span>
+                          </div>
+                          <span
+                            className={`text-xs font-medium px-2 py-0.5 rounded-full ${typeStyle.bg} ${typeStyle.text}`}
+                          >
+                            {typeStyle.label}
+                          </span>
+                        </div>
+                        <p className="mt-2 text-xs text-gray-600 leading-relaxed">
+                          {rec.reason}
+                        </p>
+                        <ul className="mt-2 space-y-1">
+                          {rec.bullets.map((b, j) => (
+                            <li
+                              key={j}
+                              className="text-xs text-gray-500 flex gap-1.5"
+                            >
+                              <span className="text-violet-400 shrink-0">•</span>
+                              {b}
+                            </li>
+                          ))}
+                        </ul>
+                        <div className="mt-3 flex items-center justify-between">
+                          <div className="text-xs text-gray-400">
+                            목표가{" "}
+                            <span className="font-semibold text-gray-700">
+                              {rec.targetPrice}
+                            </span>
+                          </div>
+                          <button
+                            onClick={() =>
+                              onNavigate("ai", {
+                                query: `${rec.name}(${rec.code}) 종목에 대해 자세히 알려줘. 지금 매수 시점이 적절한지 분석해줘.`,
+                              })
+                            }
+                            className="text-xs text-violet-600 font-medium flex items-center gap-1 active:opacity-70"
+                          >
+                            AI 상담에서 물어보기
+                            <ChevronRight size={12} />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <p className="text-xs text-gray-400 text-center mt-3 px-2">
+                  투자 판단의 참고 자료이며, 실제 매매는 본인 책임 하에
+                  결정하세요.
+                </p>
+              </Section>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Section({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <h2 className="text-sm font-bold text-gray-800 mb-3 flex items-center gap-2">
+        <span className="w-1 h-4 bg-violet-500 rounded-full inline-block" />
+        {title}
+      </h2>
+      {children}
+    </div>
+  );
+}
+
+function EmptyState({
+  onNavigate,
+}: {
+  onNavigate: (tab: TabId) => void;
+}) {
+  return (
+    <div className="text-center py-16 px-6">
+      <div className="text-5xl mb-4">📈</div>
+      <h3 className="font-semibold text-gray-700 mb-2">아직 종목이 없어요</h3>
+      <p className="text-sm text-gray-400 mb-6 leading-relaxed">
+        내 종목 탭에서 보유 종목을 먼저 등록하면 매일 아침 AI 브리핑을
+        받을 수 있어요
+      </p>
+      <button
+        onClick={() => onNavigate("stocks")}
+        className="bg-violet-600 text-white text-sm font-medium px-5 py-2 rounded-full"
+      >
+        종목 등록하러 가기
+      </button>
+    </div>
+  );
+}
+
+function LoadingSkeleton() {
+  return (
+    <div className="space-y-5 animate-pulse">
+      {[1, 2, 3].map((i) => (
+        <div key={i} className="space-y-2">
+          <div className="h-4 bg-gray-200 rounded w-1/3" />
+          <div className="h-24 bg-gray-100 rounded-xl" />
+        </div>
+      ))}
+    </div>
+  );
+}

@@ -1,0 +1,120 @@
+"use client";
+
+import { useState, useEffect } from "react";
+import { WeeklyIssues } from "@/lib/types";
+import { getWeeklyIssues, saveWeeklyIssues, getStocks } from "@/lib/storage";
+import { getIssueTagStyle } from "@/lib/utils";
+import { RefreshCw, AlertCircle, CalendarDays } from "lucide-react";
+
+export default function WeeklyTab() {
+  const [data, setData] = useState<WeeklyIssues | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setData(getWeeklyIssues());
+  }, []);
+
+  async function generate() {
+    setLoading(true);
+    setError(null);
+    try {
+      const stocks = getStocks();
+      const res = await fetch("/api/generate-weekly", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ stocks }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || "생성 실패");
+      }
+      const result: WeeklyIssues = await res.json();
+      saveWeeklyIssues(result);
+      setData(result);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "오류가 발생했습니다");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="tab-content">
+      <div className="sticky top-0 bg-white border-b border-gray-100 px-4 py-3 z-10">
+        <div className="flex items-center justify-between">
+          <h1 className="font-bold text-gray-900">주간 이슈</h1>
+          <button
+            onClick={generate}
+            disabled={loading}
+            className="flex items-center gap-1.5 bg-violet-600 text-white text-sm font-medium px-3 py-1.5 rounded-full disabled:opacity-60"
+          >
+            <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
+            {loading ? "생성 중..." : "이번 주 이슈"}
+          </button>
+        </div>
+      </div>
+
+      <div className="px-4 py-4 space-y-4">
+        {error && (
+          <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-xl p-3">
+            <AlertCircle size={16} className="text-red-500 mt-0.5 shrink-0" />
+            <p className="text-sm text-red-700">{error}</p>
+          </div>
+        )}
+
+        {loading && (
+          <div className="space-y-3 animate-pulse">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="h-32 bg-gray-100 rounded-xl" />
+            ))}
+          </div>
+        )}
+
+        {!data && !loading && (
+          <div className="text-center py-16">
+            <CalendarDays size={40} className="mx-auto text-gray-200 mb-3" />
+            <p className="text-gray-400 text-sm">이번 주 이슈가 없어요</p>
+            <p className="text-gray-300 text-xs mt-1">위 버튼으로 생성해보세요</p>
+          </div>
+        )}
+
+        {data && !loading && (
+          <>
+            <p className="text-xs text-gray-400">
+              {data.weekStart} 주간 · {new Date(data.generatedAt).toLocaleString("ko-KR")} 생성
+            </p>
+            {data.issues.map((issue) => (
+              <div
+                key={issue.id}
+                className="bg-white border border-gray-100 rounded-xl p-4 shadow-sm"
+              >
+                <h3 className="font-semibold text-sm text-gray-900 leading-snug">
+                  {issue.title}
+                </h3>
+                <p className="mt-2 text-xs text-gray-500 leading-relaxed">
+                  {issue.description}
+                </p>
+                {issue.relatedStocks.length > 0 && (
+                  <div className="mt-3 flex flex-wrap gap-1.5">
+                    {issue.relatedStocks.map((rs, i) => {
+                      const style = getIssueTagStyle(rs.tag);
+                      return (
+                        <span
+                          key={i}
+                          className={`text-xs px-2 py-0.5 rounded-full ${style.bg} ${style.text}`}
+                        >
+                          {rs.stockName} · {style.label}
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            ))}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
