@@ -2,15 +2,20 @@
 
 import { useState, useEffect } from "react";
 import { Stock } from "@/lib/types";
-import { getStocks, addStock, removeStock } from "@/lib/storage";
+import { getStocks, addStock, removeStock, resetPin } from "@/lib/storage";
 import { generateId, getCountryFlag, formatPrice } from "@/lib/utils";
-import { Plus, Trash2, Target, TrendingDown } from "lucide-react";
+import { Plus, Trash2, Target, TrendingDown, KeyRound, ChevronDown, ChevronUp } from "lucide-react";
 
-export default function StocksTab() {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export default function StocksTab({ onLock }: { onLock?: () => void }) {
   const [stocks, setStocks] = useState<Stock[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<Partial<Stock>>({ country: "KR", currency: "KRW" });
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [showPinSection, setShowPinSection] = useState(false);
+  const [oldPin, setOldPin] = useState("");
+  const [newPin, setNewPin] = useState("");
+  const [pinMsg, setPinMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
   useEffect(() => {
     setStocks(getStocks());
@@ -181,6 +186,68 @@ export default function StocksTab() {
             <p className="text-gray-300 text-xs mt-1">위 버튼으로 종목을 추가해보세요</p>
           </div>
         )}
+
+        {/* PIN 변경 섹션 */}
+        <div className="border border-gray-100 rounded-xl overflow-hidden">
+          <button
+            onClick={() => { setShowPinSection(!showPinSection); setPinMsg(null); }}
+            className="w-full flex items-center justify-between px-4 py-3 bg-white active:bg-gray-50"
+          >
+            <div className="flex items-center gap-2 text-sm font-medium text-gray-700">
+              <KeyRound size={15} className="text-gray-400" />
+              PIN 변경
+            </div>
+            {showPinSection ? <ChevronUp size={15} className="text-gray-400" /> : <ChevronDown size={15} className="text-gray-400" />}
+          </button>
+
+          {showPinSection && (
+            <div className="px-4 pb-4 space-y-2 border-t border-gray-50 pt-3 bg-white">
+              <input
+                type="password"
+                inputMode="numeric"
+                maxLength={4}
+                placeholder="현재 PIN (4자리)"
+                value={oldPin}
+                onChange={(e) => setOldPin(e.target.value.replace(/\D/g, "").slice(0, 4))}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-300 tracking-widest text-center"
+              />
+              <input
+                type="password"
+                inputMode="numeric"
+                maxLength={4}
+                placeholder="새 PIN (4자리)"
+                value={newPin}
+                onChange={(e) => setNewPin(e.target.value.replace(/\D/g, "").slice(0, 4))}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-300 tracking-widest text-center"
+              />
+              {pinMsg && (
+                <p className={`text-xs text-center ${pinMsg.ok ? "text-emerald-600" : "text-red-500"}`}>
+                  {pinMsg.text}
+                </p>
+              )}
+              <button
+                onClick={async () => {
+                  if (oldPin.length !== 4 || newPin.length !== 4) {
+                    setPinMsg({ ok: false, text: "PIN은 4자리여야 합니다" });
+                    return;
+                  }
+                  const ok = await resetPin(oldPin, newPin);
+                  if (ok) {
+                    setPinMsg({ ok: true, text: "PIN이 변경되었습니다" });
+                    setOldPin(""); setNewPin("");
+                    setTimeout(() => { setShowPinSection(false); setPinMsg(null); }, 1500);
+                  } else {
+                    setPinMsg({ ok: false, text: "현재 PIN이 올바르지 않습니다" });
+                    setOldPin("");
+                  }
+                }}
+                className="w-full py-2 rounded-lg bg-violet-600 text-white text-sm font-medium"
+              >
+                PIN 변경
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

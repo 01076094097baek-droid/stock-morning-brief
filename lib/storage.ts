@@ -6,6 +6,55 @@ import {
   STORAGE_KEYS,
 } from "./types";
 
+// 인증
+const AUTH_KEY = "smb_pin_hash";
+const SESSION_KEY = "smb_session";
+
+async function hashPin(pin: string): Promise<string> {
+  const data = new TextEncoder().encode(pin + "smb_salt");
+  const buf = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(buf))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+export function hasPinSet(): boolean {
+  if (!isBrowser()) return false;
+  return !!localStorage.getItem(AUTH_KEY);
+}
+
+export async function setPin(pin: string): Promise<void> {
+  const hash = await hashPin(pin);
+  localStorage.setItem(AUTH_KEY, hash);
+  sessionStorage.setItem(SESSION_KEY, "1");
+}
+
+export async function verifyPin(pin: string): Promise<boolean> {
+  const stored = localStorage.getItem(AUTH_KEY);
+  if (!stored) return false;
+  const hash = await hashPin(pin);
+  const ok = hash === stored;
+  if (ok) sessionStorage.setItem(SESSION_KEY, "1");
+  return ok;
+}
+
+export function isSessionActive(): boolean {
+  if (!isBrowser()) return false;
+  return sessionStorage.getItem(SESSION_KEY) === "1";
+}
+
+export function lockSession(): void {
+  if (!isBrowser()) return;
+  sessionStorage.removeItem(SESSION_KEY);
+}
+
+export async function resetPin(oldPin: string, newPin: string): Promise<boolean> {
+  const ok = await verifyPin(oldPin);
+  if (!ok) return false;
+  await setPin(newPin);
+  return true;
+}
+
 function isBrowser() {
   return typeof window !== "undefined";
 }
