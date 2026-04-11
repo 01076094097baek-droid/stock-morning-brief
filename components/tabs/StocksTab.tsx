@@ -58,6 +58,7 @@ export default function StocksTab({ onLock }: { onLock?: () => void }) {
     addStock(newStock);
     const updated = getStocks();
     setStocks(updated);
+    syncToKv(updated);
     setForm({ country: "KR", currency: "KRW" });
     setShowForm(false);
     setErrors({});
@@ -66,7 +67,18 @@ export default function StocksTab({ onLock }: { onLock?: () => void }) {
   function handleRemove(id: string) {
     if (!confirm("이 종목을 삭제할까요?")) return;
     removeStock(id);
-    setStocks(getStocks());
+    const updated = getStocks();
+    setStocks(updated);
+    syncToKv(updated);
+  }
+
+  // 종목 변경 시 KV 동기화 (백그라운드, 실패 무시)
+  function syncToKv(stockList: import("@/lib/types").Stock[]) {
+    fetch("/api/stocks/sync", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ stocks: stockList }),
+    }).catch(() => {});
   }
 
   const krStocks = stocks.filter((s) => s.country === "KR");
