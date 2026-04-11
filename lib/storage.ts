@@ -1,246 +1,122 @@
-import {
-  Stock,
-  DailyBriefing,
-  WeeklyIssues,
-  StockCaptures,
-  STORAGE_KEYS,
-} from "./types";
+import { Stock, DailyBriefing, Capture, CaptureSlot, STORAGE_KEYS } from "./types";
 
-// 인증
-const AUTH_KEY = "smb_pin_hash";
-const SESSION_KEY = "smb_session";
-const HINT_KEY = "smb_hint";
-
-async function sha256(text: string): Promise<string> {
-  const data = new TextEncoder().encode(text + "smb_salt");
-  const buf = await crypto.subtle.digest("SHA-256", data);
+// ─── PIN auth ─────────────────────────────────────────────────────────────────
+export async function sha256(text: string): Promise<string> {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
   return Array.from(new Uint8Array(buf))
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
 }
 
-export function hasPinSet(): boolean {
-  if (!isBrowser()) return false;
-  return !!localStorage.getItem(AUTH_KEY);
-}
-
 export async function setPin(pin: string): Promise<void> {
-  const hash = await sha256(pin);
-  localStorage.setItem(AUTH_KEY, hash);
-  sessionStorage.setItem(SESSION_KEY, "1");
+  localStorage.setItem(STORAGE_KEYS.PIN, await sha256(pin));
 }
 
 export async function verifyPin(pin: string): Promise<boolean> {
-  const stored = localStorage.getItem(AUTH_KEY);
+  const stored = localStorage.getItem(STORAGE_KEYS.PIN);
   if (!stored) return false;
-  const hash = await sha256(pin);
-  const ok = hash === stored;
-  if (ok) sessionStorage.setItem(SESSION_KEY, "1");
-  return ok;
+  return stored === (await sha256(pin));
 }
 
+export function hasPin(): boolean {
+  return !!localStorage.getItem(STORAGE_KEYS.PIN);
+}
+
+// ─── Session ──────────────────────────────────────────────────────────────────
 export function isSessionActive(): boolean {
-  if (!isBrowser()) return false;
-  return sessionStorage.getItem(SESSION_KEY) === "1";
+  return sessionStorage.getItem(STORAGE_KEYS.SESSION) === "1";
+}
+
+export function startSession(): void {
+  sessionStorage.setItem(STORAGE_KEYS.SESSION, "1");
 }
 
 export function lockSession(): void {
-  if (!isBrowser()) return;
-  sessionStorage.removeItem(SESSION_KEY);
+  sessionStorage.removeItem(STORAGE_KEYS.SESSION);
 }
 
-export async function resetPin(oldPin: string, newPin: string): Promise<boolean> {
-  const ok = await verifyPin(oldPin);
-  if (!ok) return false;
-  await setPin(newPin);
-  return true;
-}
-
-// 힌트 질문/답변
-export interface HintData {
-  question: string;
-  answerHash: string;
-}
-
-export async function setHint(question: string, answer: string): Promise<void> {
-  const answerHash = await sha256(answer.trim().toLowerCase());
-  const data: HintData = { question, answerHash };
-  localStorage.setItem(HINT_KEY, JSON.stringify(data));
+// ─── Hint ─────────────────────────────────────────────────────────────────────
+export function setHint(question: string, answer: string): void {
+  localStorage.setItem(STORAGE_KEYS.HINT_Q, question);
+  localStorage.setItem(STORAGE_KEYS.HINT_A, answer.trim().toLowerCase());
 }
 
 export function getHintQuestion(): string | null {
-  if (!isBrowser()) return null;
-  try {
-    const data = localStorage.getItem(HINT_KEY);
-    if (!data) return null;
-    return (JSON.parse(data) as HintData).question;
-  } catch {
-    return null;
-  }
+  return localStorage.getItem(STORAGE_KEYS.HINT_Q);
 }
 
-export function hasHintSet(): boolean {
-  if (!isBrowser()) return false;
-  return !!localStorage.getItem(HINT_KEY);
+export function hasHint(): boolean {
+  return !!localStorage.getItem(STORAGE_KEYS.HINT_Q);
 }
 
-export async function verifyHintAnswer(answer: string): Promise<boolean> {
-  if (!isBrowser()) return false;
-  try {
-    const data = localStorage.getItem(HINT_KEY);
-    if (!data) return false;
-    const { answerHash } = JSON.parse(data) as HintData;
-    const hash = await sha256(answer.trim().toLowerCase());
-    return hash === answerHash;
-  } catch {
-    return false;
-  }
+export function verifyHintAnswer(answer: string): boolean {
+  return localStorage.getItem(STORAGE_KEYS.HINT_A) === answer.trim().toLowerCase();
 }
 
-// 힌트 답변으로 PIN 재설정
-export async function resetPinWithHint(
-  answer: string,
-  newPin: string
-): Promise<boolean> {
-  const ok = await verifyHintAnswer(answer);
-  if (!ok) return false;
+export async function resetPinWithHint(answer: string, newPin: string): Promise<boolean> {
+  if (!verifyHintAnswer(answer)) return false;
   await setPin(newPin);
   return true;
 }
 
-function isBrowser() {
-  return typeof window !== "undefined";
-}
-
-// 보유 종목
+// ─── Stocks ───────────────────────────────────────────────────────────────────
 export function getStocks(): Stock[] {
-  if (!isBrowser()) return [];
   try {
-    const data = localStorage.getItem(STORAGE_KEYS.STOCKS);
-    return data ? JSON.parse(data) : [];
+    return JSON.parse(localStorage.getItem(STORAGE_KEYS.STOCKS) || "[]");
   } catch {
     return [];
   }
 }
 
 export function saveStocks(stocks: Stock[]): void {
-  if (!isBrowser()) return;
   localStorage.setItem(STORAGE_KEYS.STOCKS, JSON.stringify(stocks));
 }
 
-export function addStock(stock: Stock): void {
-  const stocks = getStocks();
-  stocks.push(stock);
-  saveStocks(stocks);
-}
-
-export function removeStock(id: string): void {
-  const stocks = getStocks().filter((s) => s.id !== id);
-  saveStocks(stocks);
-}
-
-// 일일 브리핑
-export function getDailyBriefing(): DailyBriefing | null {
-  if (!isBrowser()) return null;
+// ─── Briefing ─────────────────────────────────────────────────────────────────
+export function getBriefing(): DailyBriefing | null {
   try {
-    const data = localStorage.getItem(STORAGE_KEYS.DAILY_BRIEFING);
-    return data ? JSON.parse(data) : null;
+    const raw = localStorage.getItem(STORAGE_KEYS.BRIEFING);
+    return raw ? JSON.parse(raw) : null;
   } catch {
     return null;
   }
 }
 
-export function saveDailyBriefing(briefing: DailyBriefing): void {
-  if (!isBrowser()) return;
-  localStorage.setItem(STORAGE_KEYS.DAILY_BRIEFING, JSON.stringify(briefing));
+export function saveBriefing(b: DailyBriefing): void {
+  localStorage.setItem(STORAGE_KEYS.BRIEFING, JSON.stringify(b));
 }
 
-// 주간 이슈
-export function getWeeklyIssues(): WeeklyIssues | null {
-  if (!isBrowser()) return null;
+// ─── Captures (today only) ────────────────────────────────────────────────────
+interface CaptureStore {
+  date: string;
+  captures: Capture[];
+}
+
+function getCaptureStore(): CaptureStore {
   try {
-    const data = localStorage.getItem(STORAGE_KEYS.WEEKLY_ISSUES);
-    return data ? JSON.parse(data) : null;
+    const raw = localStorage.getItem(STORAGE_KEYS.CAPTURES);
+    if (!raw) return { date: "", captures: [] };
+    return JSON.parse(raw);
   } catch {
-    return null;
+    return { date: "", captures: [] };
   }
 }
 
-export function saveWeeklyIssues(issues: WeeklyIssues): void {
-  if (!isBrowser()) return;
-  localStorage.setItem(STORAGE_KEYS.WEEKLY_ISSUES, JSON.stringify(issues));
+export function getTodayCaptures(): Capture[] {
+  const today = new Date().toISOString().split("T")[0];
+  const store = getCaptureStore();
+  return store.date === today ? store.captures : [];
 }
 
-// 캡처
-export function getCaptures(date: string): StockCaptures[] {
-  if (!isBrowser()) return [];
-  try {
-    const key = `${STORAGE_KEYS.CAPTURES}_${date}`;
-    const data = localStorage.getItem(key);
-    return data ? JSON.parse(data) : [];
-  } catch {
-    return [];
-  }
+export function saveCapture(capture: Capture): void {
+  const today = new Date().toISOString().split("T")[0];
+  const existing = getTodayCaptures();
+  const updated = [...existing.filter((c) => c.slot !== capture.slot), capture];
+  localStorage.setItem(STORAGE_KEYS.CAPTURES, JSON.stringify({ date: today, captures: updated }));
 }
 
-export function saveCapture(
-  date: string,
-  stockId: string,
-  slot: string,
-  imageData: string
-): void {
-  if (!isBrowser()) return;
-  const key = `${STORAGE_KEYS.CAPTURES}_${date}`;
-  const captures = getCaptures(date);
-  let stockCapture = captures.find((c) => c.stockId === stockId);
-  if (!stockCapture) {
-    stockCapture = { stockId, date, captures: {} };
-    captures.push(stockCapture);
-  }
-  (stockCapture.captures as Record<string, unknown>)[slot] = {
-    slot,
-    imageData,
-    uploadedAt: new Date().toISOString(),
-  };
-  localStorage.setItem(key, JSON.stringify(captures));
-}
-
-export function saveCaptureAnalysis(
-  date: string,
-  stockId: string,
-  slot: string,
-  analysis: import("./types").CaptureAnalysis
-): void {
-  if (!isBrowser()) return;
-  const key = `${STORAGE_KEYS.CAPTURES}_${date}`;
-  const captures = getCaptures(date);
-  const stockCapture = captures.find((c) => c.stockId === stockId);
-  if (!stockCapture) return;
-  const capture = (stockCapture.captures as Record<string, import("./types").Capture>)[slot];
-  if (!capture) return;
-  capture.analysis = analysis;
-  capture.analyzing = false;
-  localStorage.setItem(key, JSON.stringify(captures));
-}
-
-export function getCapturesByStock(date: string, stockId: string): import("./types").StockCaptures | null {
-  const all = getCaptures(date);
-  return all.find((c) => c.stockId === stockId) ?? null;
-}
-
-// 모든 종목의 오늘 최신 캡처 분석 결과 요약 (브리핑용)
-export function getTodayCapturesSummary(date: string): Record<string, import("./types").CaptureAnalysis | null> {
-  const all = getCaptures(date);
-  const result: Record<string, import("./types").CaptureAnalysis | null> = {};
-  all.forEach((sc) => {
-    // 마감 > 장중 > 아침 순으로 최신 분석 우선
-    const priority: import("./types").CaptureSlot[] = ["close", "midday", "morning"];
-    let found: import("./types").CaptureAnalysis | null = null;
-    for (const slot of priority) {
-      const cap = sc.captures[slot];
-      if (cap?.analysis) { found = cap.analysis; break; }
-    }
-    result[sc.stockId] = found;
-  });
-  return result;
+export function removeCapture(slot: CaptureSlot): void {
+  const today = new Date().toISOString().split("T")[0];
+  const updated = getTodayCaptures().filter((c) => c.slot !== slot);
+  localStorage.setItem(STORAGE_KEYS.CAPTURES, JSON.stringify({ date: today, captures: updated }));
 }

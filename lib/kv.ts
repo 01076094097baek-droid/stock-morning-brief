@@ -1,68 +1,67 @@
 /**
- * Vercel KV wrapper — gracefully falls back when KV is not configured.
- * KV_REST_API_URL + KV_REST_API_TOKEN must be set in Vercel env vars.
+ * Vercel KV (Upstash Redis) wrapper.
+ * Gracefully falls back when KV env vars are not configured.
  */
+import { kv } from "@vercel/kv";
+import { DailyBriefing, Stock } from "./types";
 
-import { kv as vercelKv } from "@vercel/kv";
-import { DailyBriefing, WeeklyIssues, Stock } from "./types";
+export interface PushSub {
+  endpoint: string;
+  expirationTime?: number | null;
+  keys: { p256dh: string; auth: string };
+}
 
-// KV가 설정되어 있는지 확인
 function isKvConfigured(): boolean {
   return !!(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN);
 }
 
 const KEYS = {
-  STOCKS: "smb:stocks",
-  BRIEFING_LATEST: "smb:briefing:latest",
-  WEEKLY_LATEST: "smb:weekly:latest",
+  STOCKS:            "smb:stocks",
+  BRIEFING:          "smb:briefing:latest",
+  PUSH_SUBSCRIPTIONS:"smb:push:subs",
 } as const;
 
-// 종목 동기화
-export async function kvSetStocks(stocks: Stock[]): Promise<void> {
-  if (!isKvConfigured()) return;
-  await vercelKv.set(KEYS.STOCKS, JSON.stringify(stocks));
-}
-
+// ── Stocks ────────────────────────────────────────────────────────────────────
 export async function kvGetStocks(): Promise<Stock[]> {
   if (!isKvConfigured()) return [];
-  try {
-    const data = await vercelKv.get<string>(KEYS.STOCKS);
-    return data ? JSON.parse(data) : [];
-  } catch {
-    return [];
-  }
+  try { return (await kv.get<Stock[]>(KEYS.STOCKS)) ?? []; } catch { return []; }
 }
 
-// 일일 브리핑
-export async function kvSetBriefing(briefing: DailyBriefing): Promise<void> {
+export async function kvSetStocks(stocks: Stock[]): Promise<void> {
   if (!isKvConfigured()) return;
-  // 7일 TTL
-  await vercelKv.set(KEYS.BRIEFING_LATEST, JSON.stringify(briefing), { ex: 60 * 60 * 24 * 7 });
+  try { await kv.set(KEYS.STOCKS, stocks); } catch {}
 }
 
+// ── Briefing ──────────────────────────────────────────────────────────────────
 export async function kvGetBriefing(): Promise<DailyBriefing | null> {
   if (!isKvConfigured()) return null;
-  try {
-    const data = await vercelKv.get<string>(KEYS.BRIEFING_LATEST);
-    return data ? JSON.parse(data) : null;
-  } catch {
-    return null;
-  }
+  try { return await kv.get<DailyBriefing>(KEYS.BRIEFING); } catch { return null; }
 }
 
-// 주간 이슈
-export async function kvSetWeekly(issues: WeeklyIssues): Promise<void> {
+export async function kvSetBriefing(b: DailyBriefing): Promise<void> {
   if (!isKvConfigured()) return;
-  // 14일 TTL
-  await vercelKv.set(KEYS.WEEKLY_LATEST, JSON.stringify(issues), { ex: 60 * 60 * 24 * 14 });
+  try { await kv.set(KEYS.BRIEFING, b); } catch {}
 }
 
-export async function kvGetWeekly(): Promise<WeeklyIssues | null> {
-  if (!isKvConfigured()) return null;
+// ── Push Subscriptions ────────────────────────────────────────────────────────
+export async function kvGetPushSubs(): Promise<PushSub[]> {
+  if (!isKvConfigured()) return [];
+  try { return (await kv.get<PushSub[]>(KEYS.PUSH_SUBSCRIPTIONS)) ?? []; } catch { return []; }
+}
+
+export async function kvSavePushSub(sub: PushSub): Promise<void> {
+  if (!isKvConfigured()) return;
   try {
-    const data = await vercelKv.get<string>(KEYS.WEEKLY_LATEST);
-    return data ? JSON.parse(data) : null;
-  } catch {
-    return null;
-  }
+    const list = await kvGetPushSubs();
+    const deduped = list.filter((s) => s.endpoint !== sub.endpoint);
+    await kv.set(KEYS.PUSH_SUBSCRIPTIONS, [...deduped, sub]);
+  } catch {}
+}
+
+export async function kvRemovePushSub(endpoint: string): Promise<void> {
+  if (!isKvConfigured()) return;
+  try {
+    const list = await kvGetPushSubs();
+    await kv.set(KEYS.PUSH_SUBSCRIPTIONS, list.filter((s) => s.endpoint !== endpoint));
+  } catch {}
 }

@@ -1,131 +1,82 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
+import { getBriefing } from "@/lib/storage";
 import { NewsItem } from "@/lib/types";
-import { getDailyBriefing } from "@/lib/storage";
-import { getNewsCategoryStyle, formatTime } from "@/lib/utils";
 import { ExternalLink, Newspaper } from "lucide-react";
 
-interface NewsTabProps {
-  highlightStockId: string | null;
-  onClearHighlight: () => void;
-}
+type Filter = "ALL" | "KR" | "US" | "MACRO";
 
-export default function NewsTab({ highlightStockId, onClearHighlight }: NewsTabProps) {
-  const [news, setNews] = useState<NewsItem[]>([]);
-  const [filter, setFilter] = useState<"ALL" | "KR" | "US" | "MACRO">("ALL");
-  const highlightRefs = useRef<Record<string, HTMLDivElement | null>>({});
+export default function NewsTab() {
+  const [news,   setNews]   = useState<NewsItem[]>([]);
+  const [filter, setFilter] = useState<Filter>("ALL");
 
   useEffect(() => {
-    const briefing = getDailyBriefing();
-    if (briefing) setNews(briefing.news);
+    const briefing = getBriefing();
+    setNews(briefing?.news ?? []);
   }, []);
 
-  useEffect(() => {
-    if (highlightStockId) {
-      const el = highlightRefs.current[highlightStockId];
-      if (el) {
-        setTimeout(() => {
-          el.scrollIntoView({ behavior: "smooth", block: "start" });
-        }, 100);
-      }
-      const timer = setTimeout(onClearHighlight, 3000);
-      return () => clearTimeout(timer);
-    }
-  }, [highlightStockId, onClearHighlight]);
-
-  const filtered = news.filter((n) => filter === "ALL" || n.category === filter);
+  const filtered = filter === "ALL" ? news : news.filter((n) => n.category === filter);
 
   return (
-    <div className="tab-content">
-      {/* 헤더 */}
-      <div className="sticky top-0 bg-white border-b border-gray-100 z-10">
-        <div className="px-4 py-3">
-          <h1 className="font-bold text-gray-900">관련 뉴스</h1>
-        </div>
-        {/* 필터 탭 */}
-        <div className="flex px-4 pb-3 gap-2">
-          {(["ALL", "KR", "US", "MACRO"] as const).map((f) => {
-            const labels = { ALL: "전체", KR: "🇰🇷 한국", US: "🇺🇸 미국", MACRO: "매크로" };
-            return (
-              <button
-                key={f}
-                onClick={() => setFilter(f)}
-                className={`text-xs px-3 py-1.5 rounded-full font-medium transition-colors ${
-                  filter === f
-                    ? "bg-violet-600 text-white"
-                    : "bg-gray-100 text-gray-500"
-                }`}
-              >
-                {labels[f]}
-              </button>
-            );
-          })}
-        </div>
+    <div className="pb-6">
+      <div className="sticky top-0 bg-white border-b border-gray-100 px-4 py-3 z-10">
+        <span className="font-semibold text-sm text-gray-900">뉴스</span>
       </div>
 
-      <div className="px-4 py-4 space-y-3">
-        {filtered.length === 0 && (
-          <div className="text-center py-16">
+      {/* Filter chips */}
+      <div className="px-4 pt-3 pb-2 flex gap-2 overflow-x-auto">
+        {(["ALL", "KR", "US", "MACRO"] as Filter[]).map((f) => (
+          <button
+            key={f}
+            onClick={() => setFilter(f)}
+            className={`shrink-0 text-xs font-semibold px-3 py-1 rounded-full border transition-colors ${
+              filter === f
+                ? "bg-violet-600 text-white border-violet-600"
+                : "bg-white text-gray-500 border-gray-200"
+            }`}
+          >
+            {f === "ALL" ? "전체" : f === "MACRO" ? "매크로" : f}
+          </button>
+        ))}
+      </div>
+
+      <div className="px-4 pb-4 space-y-3">
+        {filtered.length === 0 ? (
+          <div className="text-center py-20">
             <Newspaper size={40} className="mx-auto text-gray-200 mb-3" />
-            <p className="text-gray-400 text-sm">
-              {news.length === 0
-                ? "브리핑을 생성하면 뉴스가 표시됩니다"
-                : "해당 카테고리의 뉴스가 없어요"}
-            </p>
+            <p className="text-gray-400 text-sm">뉴스가 없어요</p>
+            <p className="text-gray-300 text-xs mt-1">브리핑을 먼저 생성해주세요</p>
           </div>
-        )}
-
-        {filtered.map((item) => {
-          const catStyle = getNewsCategoryStyle(item.category);
-          const isHighlighted = item.stockId === highlightStockId;
-
-          return (
-            <div
-              key={item.id}
-              ref={(el) => {
-                if (item.stockId) highlightRefs.current[item.stockId] = el;
-              }}
-              className={`bg-white border rounded-xl p-4 shadow-sm transition-all ${
-                isHighlighted
-                  ? "border-violet-300 ring-2 ring-violet-100"
-                  : "border-gray-100"
-              }`}
-            >
-              <div className="flex items-center gap-2 mb-2">
-                <span
-                  className={`text-xs font-medium px-2 py-0.5 rounded-full ${catStyle.bg} ${catStyle.text}`}
-                >
-                  {catStyle.label}
-                </span>
-                {item.stockName && (
-                  <span className="text-xs text-gray-400">{item.stockName}</span>
+        ) : (
+          filtered.map((n) => (
+            <div key={n.id} className="bg-white border border-gray-100 rounded-2xl p-4 shadow-sm">
+              <div className="flex items-center gap-1.5 mb-2">
+                {n.stockName && (
+                  <span className="text-[10px] font-semibold text-violet-600 bg-violet-50 px-1.5 py-0.5 rounded-full">
+                    {n.stockName}
+                  </span>
                 )}
-                <span className="text-xs text-gray-300 ml-auto">
-                  {formatTime(item.publishedAt)}
+                <span className="text-[10px] font-semibold text-gray-400 bg-gray-50 px-1.5 py-0.5 rounded-full">
+                  {n.category}
                 </span>
+                <span className="text-[10px] text-gray-300 ml-auto">{n.source}</span>
               </div>
-              <h3 className="text-sm font-semibold text-gray-800 leading-snug mb-1">
-                {item.title}
-              </h3>
-              <p className="text-xs text-gray-500 leading-relaxed line-clamp-2">
-                {item.summary}
-              </p>
-              <div className="mt-3 flex items-center justify-between">
-                <span className="text-xs text-gray-300">{item.source}</span>
+              <p className="text-sm font-semibold text-gray-900 leading-snug mb-1.5">{n.title}</p>
+              <p className="text-xs text-gray-500 leading-relaxed mb-3">{n.summary}</p>
+              {n.url && n.url !== "#" && (
                 <a
-                  href={item.url}
+                  href={n.url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="flex items-center gap-1 text-xs text-violet-600 font-medium"
+                  className="flex items-center gap-1 text-xs text-violet-600 font-semibold"
                 >
-                  기사 원문 보기
-                  <ExternalLink size={11} />
+                  <ExternalLink size={11} />원문 보기
                 </a>
-              </div>
+              )}
             </div>
-          );
-        })}
+          ))
+        )}
       </div>
     </div>
   );

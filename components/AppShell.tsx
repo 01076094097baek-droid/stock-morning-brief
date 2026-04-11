@@ -1,75 +1,77 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import TabNav from "./TabNav";
+import { isSessionActive, lockSession } from "@/lib/storage";
 import LoginScreen from "./LoginScreen";
 import BriefingTab from "./tabs/BriefingTab";
 import NewsTab from "./tabs/NewsTab";
-import WeeklyTab from "./tabs/WeeklyTab";
-import HoldingsTab from "./tabs/HoldingsTab";
-import StocksTab from "./tabs/StocksTab";
-import AiTab from "./tabs/AiTab";
-import { isSessionActive, lockSession } from "@/lib/storage";
-import { Lock } from "lucide-react";
+import CaptureTab from "./tabs/CaptureTab";
+import SettingsTab from "./tabs/SettingsTab";
+import { LayoutDashboard, Newspaper, Camera, Settings, Lock } from "lucide-react";
 
-export type TabId = "briefing" | "news" | "weekly" | "holdings" | "stocks" | "ai";
+type Tab = "briefing" | "news" | "capture" | "settings";
+
+const TABS = [
+  { id: "briefing",  label: "브리핑", Icon: LayoutDashboard },
+  { id: "news",      label: "뉴스",   Icon: Newspaper },
+  { id: "capture",   label: "캡처",   Icon: Camera },
+  { id: "settings",  label: "설정",   Icon: Settings },
+] as const;
 
 export default function AppShell() {
+  const [ready,  setReady]  = useState(false);
   const [authed, setAuthed] = useState(false);
-  const [ready, setReady] = useState(false); // hydration 후 체크
-  const [activeTab, setActiveTab] = useState<TabId>("briefing");
-  const [highlightStockId, setHighlightStockId] = useState<string | null>(null);
-  const [aiQuery, setAiQuery] = useState<string>("");
+  const [tab,    setTab]    = useState<Tab>("briefing");
 
   useEffect(() => {
     setAuthed(isSessionActive());
     setReady(true);
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js").catch(() => {});
+    }
   }, []);
 
-  function navigateTo(tab: TabId, options?: { stockId?: string; query?: string }) {
-    setActiveTab(tab);
-    if (options?.stockId) setHighlightStockId(options.stockId);
-    if (options?.query) setAiQuery(options.query);
-  }
-
-  function handleLock() {
-    lockSession();
-    setAuthed(false);
-  }
-
-  // SSR hydration 전엔 아무것도 렌더링 안 함
-  if (!ready) return null;
-
-  if (!authed) {
-    return <LoginScreen onSuccess={() => setAuthed(true)} />;
-  }
+  if (!ready)  return null;
+  if (!authed) return <LoginScreen onSuccess={() => setAuthed(true)} />;
 
   return (
-    <div className="relative">
-      {/* 잠금 버튼 (우상단 고정) */}
-      <button
-        onClick={handleLock}
-        className="fixed top-3 right-3 z-50 w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 text-gray-400 active:bg-gray-200 transition-colors"
-        title="잠금"
-      >
-        <Lock size={15} />
-      </button>
+    <div className="flex flex-col h-screen">
+      <header className="flex items-center justify-between px-4 py-3 border-b border-gray-100 bg-white shrink-0">
+        <span className="font-bold text-gray-900">주식 모닝 브리핑</span>
+        <button
+          onClick={() => { lockSession(); setAuthed(false); }}
+          className="p-1.5 rounded-full text-gray-400 hover:bg-gray-50"
+        >
+          <Lock size={16} />
+        </button>
+      </header>
 
-      {activeTab === "briefing" && (
-        <BriefingTab onNavigate={navigateTo} />
-      )}
-      {activeTab === "news" && (
-        <NewsTab highlightStockId={highlightStockId} onClearHighlight={() => setHighlightStockId(null)} />
-      )}
-      {activeTab === "weekly" && <WeeklyTab />}
-      {activeTab === "holdings" && <HoldingsTab />}
-      {activeTab === "stocks" && (
-        <StocksTab onLock={handleLock} />
-      )}
-      {activeTab === "ai" && (
-        <AiTab initialQuery={aiQuery} onQueryUsed={() => setAiQuery("")} />
-      )}
-      <TabNav activeTab={activeTab} onTabChange={(tab) => navigateTo(tab)} />
+      <main className="flex-1 overflow-y-auto">
+        {tab === "briefing" && <BriefingTab />}
+        {tab === "news"     && <NewsTab />}
+        {tab === "capture"  && <CaptureTab onDone={() => setTab("briefing")} />}
+        {tab === "settings" && <SettingsTab />}
+      </main>
+
+      <nav className="border-t border-gray-100 bg-white shrink-0">
+        <div className="flex">
+          {TABS.map(({ id, label, Icon }) => {
+            const active = tab === id;
+            return (
+              <button
+                key={id}
+                onClick={() => setTab(id as Tab)}
+                className={`flex-1 flex flex-col items-center gap-0.5 py-2.5 ${
+                  active ? "text-violet-600" : "text-gray-400"
+                }`}
+              >
+                <Icon size={20} strokeWidth={active ? 2.5 : 1.8} />
+                <span className="text-[10px] font-medium">{label}</span>
+              </button>
+            );
+          })}
+        </div>
+      </nav>
     </div>
   );
 }

@@ -1,0 +1,13 @@
+{
+  "name": "주식 모닝 브리핑",
+  "short_name": "모닝브리핑",
+  "description": "매일 아침 AI 주식 브리핑",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#7c3aed",
+  "orientation": "portrait",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
