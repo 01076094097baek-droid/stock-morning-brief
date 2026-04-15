@@ -4,7 +4,7 @@ import { CaptureAnalysis, CaptureDeepAnalysis } from "@/lib/types";
 
 export const maxDuration = 60;
 
-/** Claude 응답에서 첫 번째 완전한 JSON 객체 추출 (greedy 정규식 문제 방지) */
+/** Claude 응답에서 첫 번째 완전한 JSON 객체 추출 */
 function extractFirstJSON(text: string): string | null {
   const clean = text.replace(/```(?:json)?\s*/g, "").replace(/```/g, "");
   const start = clean.indexOf("{");
@@ -22,13 +22,37 @@ function extractFirstJSON(text: string): string | null {
   return null;
 }
 
+/** 파싱 실패 시 텍스트에서 최대한 의견 추출해 폴백 객체 반환 */
+function fallbackDeepAnalysis(text: string): CaptureDeepAnalysis {
+  const lower = text.toLowerCase();
+  let opinion: "buy" | "hold" | "sell" = "hold";
+  if (/\bbuy\b|매수/.test(lower))  opinion = "buy";
+  else if (/\bsell\b|매도/.test(lower)) opinion = "sell";
+
+  // 텍스트에서 목표가/손절가 패턴 시도
+  const targetMatch  = text.match(/목표가[:\s]*([￦$₩]?[\d,]+[원달러]?)/);
+  const stopMatch    = text.match(/손절가[:\s]*([￦$₩]?[\d,]+[원달러]?)/);
+
+  return {
+    opinion,
+    opinionReasons: [text.replace(/\s+/g, " ").trim().slice(0, 400)],
+    targetPrice:    targetMatch?.[1] ?? null,
+    stopLossPrice:  stopMatch?.[1]  ?? null,
+    risks: [],
+    chartAnalysis:  "",
+    marketContext:  "",
+    newsItems:      [],
+    summary:        text.replace(/\s+/g, " ").trim().slice(0, 200),
+  };
+}
+
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-// ── Step 1: 이미지에서 종목 데이터 추출 ─────────────────────────────────────
+// ── Step 1: 이미지에서 종목 데이터 추출 (다중 종목) ──────────────────────────
 const IMAGE_PROMPT = `당신은 주식 MTS(모바일 트레이딩 시스템) 화면 분석 전문가입니다.
 이 이미지는 한국 또는 미국 주식 앱의 스크린샷입니다.
 
-아래 정보를 이미지에서 최대한 추출하세요:
+이미지에 보이는 모든 종목을 빠짐없이 추출하세요. 보유종목 목록 화면처럼 여러 종목이 동시에 보일 수 있습니다.
 
 [한국 MTS: 삼성증권 mPOP, 키움 영웅문S#, 미래에셋 m.ALL, NH나무, 토스증권, KB증권, 신한투자증권]
 - 현재가(원), 등락률(%), 평단가/평균매입가(원), 수익률(%), 평가금액(원), 보유수량(주)
@@ -39,17 +63,21 @@ const IMAGE_PROMPT = `당신은 주식 MTS(모바일 트레이딩 시스템) 화
 [공통]
 - 종목명(한글 또는 영문), 티커/종목코드
 
-JSON으로만 응답 (확인 불가 필드는 null):
+아래 형식의 JSON 객체로만 응답하세요 (마크다운 금지, 확인 불가 필드는 null):
 {
-  "stockName": "종목명 또는 null",
-  "currentPrice": "현재가 텍스트 또는 null",
-  "changeRate": "등락률 (예: +1.23%) 또는 null",
-  "avgPrice": "평단가/평균매입가 텍스트 또는 null",
-  "returnRate": "수익률 (예: +15.3%) 또는 null",
-  "evaluationAmount": "평가금액 텍스트 또는 null",
-  "quantity": "보유수량 텍스트 또는 null",
-  "analysisText": "한줄 요약 (예: 삼성전자 75,400원, 수익률 +15.3%)",
-  "appType": "인식된 앱 이름 또는 null"
+  "appType": "인식된 앱 이름 또는 null",
+  "stocks": [
+    {
+      "stockName": "종목명",
+      "currentPrice": "현재가 텍스트 또는 null",
+      "changeRate": "등락률 (예: +1.23%) 또는 null",
+      "avgPrice": "평단가 텍스트 또는 null",
+      "returnRate": "수익률 (예: +15.3%) 또는 null",
+      "evaluationAmount": "평가금액 텍스트 또는 null",
+      "quantity": "보유수량 텍스트 또는 null",
+      "analysisText": "한줄 요약"
+    }
+  ]
 }`;
 
 // ── Step 2: 심층 분석 프롬프트 ───────────────────────────────────────────────
@@ -92,6 +120,30 @@ ${ctx}
 }`;
 }
 
+/** Step 2 응답 텍스트 → CaptureDeepAnalysis (파싱 실패 시 폴백) */
+function parseDeep(text: string): CaptureDeepAnalysis {
+  // 1차: 정상 JSON 파싱 시도
+  const jsonStr = extractFirstJSON(text);
+  if (jsonStr) {
+    try {
+      const r = JSON.parse(jsonStr);
+      return {
+        opinion:        (r.opinion === "buy" || r.opinion === "sell") ? r.opinion : "hold",
+        opinionReasons: Array.isArray(r.opinionReasons) ? r.opinionReasons : [],
+        targetPrice:    r.targetPrice   ?? null,
+        stopLossPrice:  r.stopLossPrice ?? null,
+        risks:          Array.isArray(r.risks) ? r.risks : [],
+        chartAnalysis:  r.chartAnalysis  ?? "",
+        marketContext:  r.marketContext  ?? "",
+        newsItems:      Array.isArray(r.newsItems) ? r.newsItems : [],
+        summary:        r.summary ?? "",
+      };
+    } catch { /* fall through */ }
+  }
+  // 2차: 텍스트 기반 폴백
+  return fallbackDeepAnalysis(text);
+}
+
 export async function POST(req: NextRequest) {
   try {
     const { imageData } = await req.json();
@@ -106,10 +158,10 @@ export async function POST(req: NextRequest) {
     type Mime = typeof supported[number];
     const mime: Mime = supported.includes(rawMime as Mime) ? (rawMime as Mime) : "image/jpeg";
 
-    // ── Step 1: 이미지 분석 ────────────────────────────────────────────────
+    // ── Step 1: 이미지에서 모든 종목 추출 ───────────────────────────────────
     const step1 = await client.messages.create({
       model: "claude-sonnet-4-6",
-      max_tokens: 1024,
+      max_tokens: 2048,
       messages: [{
         role: "user",
         content: [
@@ -123,46 +175,44 @@ export async function POST(req: NextRequest) {
     const step1Json = extractFirstJSON(step1Text);
     if (!step1Json) throw new Error("이미지에서 종목 정보를 추출할 수 없습니다");
 
-    const rawAnalysis = JSON.parse(step1Json);
-    const analysis: CaptureAnalysis = Object.fromEntries(
-      Object.entries(rawAnalysis).filter(([, v]) => v !== null && v !== "")
-    ) as CaptureAnalysis;
+    const wrapper = JSON.parse(step1Json);
+    const rawStocks: CaptureAnalysis[] = Array.isArray(wrapper.stocks) ? wrapper.stocks : [];
+    if (rawStocks.length === 0) throw new Error("이미지에서 종목을 찾을 수 없습니다");
 
-    // ── Step 2: 웹 검색 심층 분석 ─────────────────────────────────────────
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const step2 = await (client.beta as any).messages.create({
-      model: "claude-sonnet-4-6",
-      max_tokens: 2048,
-      betas: ["web-search-2025-03-05"],
-      tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 5 }],
-      messages: [{
-        role: "user",
-        content: [
-          { type: "image", source: { type: "base64", media_type: mime, data: base64 } },
-          { type: "text", text: buildDeepPrompt(analysis) },
-        ],
-      }],
-    });
+    // null/빈값 필드 제거
+    const analyses: CaptureAnalysis[] = rawStocks.map((s) =>
+      Object.fromEntries(Object.entries(s).filter(([, v]) => v !== null && v !== "")) as CaptureAnalysis
+    );
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const step2Text = step2.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
-    const step2Json = extractFirstJSON(step2Text);
-    if (!step2Json) throw new Error("심층 분석 결과를 파싱할 수 없습니다");
+    // ── Step 2: 각 종목 심층 분석 (병렬) ────────────────────────────────────
+    const deepAnalyses: CaptureDeepAnalysis[] = await Promise.all(
+      analyses.map(async (analysis) => {
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const step2 = await (client.beta as any).messages.create({
+            model: "claude-sonnet-4-6",
+            max_tokens: 2048,
+            betas: ["web-search-2025-03-05"],
+            tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 4 }],
+            messages: [{
+              role: "user",
+              content: [
+                { type: "image", source: { type: "base64", media_type: mime, data: base64 } },
+                { type: "text", text: buildDeepPrompt(analysis) },
+              ],
+            }],
+          });
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const text = step2.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
+          return parseDeep(text);
+        } catch (e) {
+          console.error("심층 분석 오류:", e);
+          return fallbackDeepAnalysis("심층 분석 중 오류가 발생했습니다. 기본 정보만 표시합니다.");
+        }
+      })
+    );
 
-    const rawDeep = JSON.parse(step2Json);
-    const deepAnalysis: CaptureDeepAnalysis = {
-      opinion:        rawDeep.opinion || "hold",
-      opinionReasons: Array.isArray(rawDeep.opinionReasons) ? rawDeep.opinionReasons : [],
-      targetPrice:    rawDeep.targetPrice   || null,
-      stopLossPrice:  rawDeep.stopLossPrice || null,
-      risks:          Array.isArray(rawDeep.risks) ? rawDeep.risks : [],
-      chartAnalysis:  rawDeep.chartAnalysis  || "",
-      marketContext:  rawDeep.marketContext  || "",
-      newsItems:      Array.isArray(rawDeep.newsItems) ? rawDeep.newsItems : [],
-      summary:        rawDeep.summary || "",
-    };
-
-    return NextResponse.json({ analysis, deepAnalysis });
+    return NextResponse.json({ analyses, deepAnalyses });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : "서버 오류";
     console.error("캡처 분석 오류:", msg, e);

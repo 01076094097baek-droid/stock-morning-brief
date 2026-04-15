@@ -99,8 +99,14 @@ export const SLOT_META: Record<CaptureSlot, { label: string; time: string; emoji
 export interface Capture {
   slot: CaptureSlot;
   imageData: string;
+  /** @deprecated 하위 호환 – 단일 종목 캡처 */
   analysis?: CaptureAnalysis;
+  /** @deprecated 하위 호환 – 단일 종목 심층분석 */
   deepAnalysis?: CaptureDeepAnalysis;
+  /** 다중 종목 (신규) */
+  analyses?: CaptureAnalysis[];
+  /** 다중 종목 심층분석 (신규) */
+  deepAnalyses?: CaptureDeepAnalysis[];
   capturedAt: string;
 }
 

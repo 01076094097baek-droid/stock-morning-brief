@@ -16,6 +16,8 @@ const SLOTS: CaptureSlot[] = ["morning", "midday", "close"];
 
 interface QAMessage { role: "user" | "assistant"; content: string; }
 
+interface StockQA { messages: QAMessage[]; input: string; loading: boolean; }
+
 interface SlotState {
   capture: Capture | null;
   analyzing: boolean;
@@ -24,11 +26,25 @@ interface SlotState {
 
 interface Props { onDone?: () => void; }
 
-// ── Opinion helpers ────────────────────────────────────────────────────────────
+// ── helpers ────────────────────────────────────────────────────────────────────
 function opinionMeta(op: "buy" | "hold" | "sell") {
   if (op === "buy")  return { label: "매수", bg: "bg-red-50",   border: "border-red-200",   text: "text-red-600",   Icon: TrendingUp };
   if (op === "sell") return { label: "매도", bg: "bg-blue-50",  border: "border-blue-200",  text: "text-blue-600",  Icon: TrendingDown };
   return                   { label: "홀딩", bg: "bg-amber-50", border: "border-amber-200", text: "text-amber-600", Icon: Minus };
+}
+
+/** 하위 호환: capture 에서 다중 종목 배열 반환 */
+function getAnalyses(c: Capture): CaptureAnalysis[] {
+  if (c.analyses && c.analyses.length > 0) return c.analyses;
+  if (c.analysis) return [c.analysis];
+  return [];
+}
+
+/** 하위 호환: capture 에서 다중 심층분석 배열 반환 */
+function getDeepAnalyses(c: Capture): (CaptureDeepAnalysis | undefined)[] {
+  if (c.deepAnalyses && c.deepAnalyses.length > 0) return c.deepAnalyses;
+  if (c.deepAnalysis) return [c.deepAnalysis];
+  return [];
 }
 
 const SUGGEST_QS = [
@@ -43,7 +59,6 @@ function DeepCard({ deep }: { deep: CaptureDeepAnalysis }) {
 
   return (
     <div className="space-y-3 pt-3 border-t border-gray-100">
-      {/* Opinion badge + summary */}
       <div className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border ${bg} ${border}`}>
         <Icon size={16} className={text} />
         <span className={`text-sm font-black ${text}`}>{label}</span>
@@ -52,7 +67,6 @@ function DeepCard({ deep }: { deep: CaptureDeepAnalysis }) {
         )}
       </div>
 
-      {/* Opinion reasons */}
       {deep.opinionReasons.length > 0 && (
         <div className="space-y-1.5">
           <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">의견 근거</p>
@@ -65,7 +79,6 @@ function DeepCard({ deep }: { deep: CaptureDeepAnalysis }) {
         </div>
       )}
 
-      {/* Target / stop-loss */}
       {(deep.targetPrice || deep.stopLossPrice) && (
         <div className="flex gap-2">
           {deep.targetPrice && (
@@ -81,7 +94,6 @@ function DeepCard({ deep }: { deep: CaptureDeepAnalysis }) {
         </div>
       )}
 
-      {/* Latest news */}
       {deep.newsItems.length > 0 && (
         <div className="space-y-1.5">
           <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">최신 뉴스</p>
@@ -102,7 +114,6 @@ function DeepCard({ deep }: { deep: CaptureDeepAnalysis }) {
         </div>
       )}
 
-      {/* Chart analysis */}
       {deep.chartAnalysis && deep.chartAnalysis !== "캡처에 차트 정보 없음" && (
         <div>
           <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1">차트 흐름</p>
@@ -110,7 +121,6 @@ function DeepCard({ deep }: { deep: CaptureDeepAnalysis }) {
         </div>
       )}
 
-      {/* Market context */}
       {deep.marketContext && (
         <div>
           <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1">시장 연관성</p>
@@ -118,7 +128,6 @@ function DeepCard({ deep }: { deep: CaptureDeepAnalysis }) {
         </div>
       )}
 
-      {/* Risks */}
       {deep.risks.length > 0 && (
         <div>
           <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1">리스크</p>
@@ -138,32 +147,32 @@ function DeepCard({ deep }: { deep: CaptureDeepAnalysis }) {
 // ── Q&A section ────────────────────────────────────────────────────────────────
 function QASection({
   capture,
-  messages,
-  input,
-  loading,
+  analysis,
+  deep,
+  qa,
   onInput,
   onSend,
   onSuggest,
 }: {
   capture: Capture;
-  messages: QAMessage[];
-  input: string;
-  loading: boolean;
+  analysis: CaptureAnalysis;
+  deep?: CaptureDeepAnalysis;
+  qa: StockQA;
   onInput: (v: string) => void;
   onSend: () => void;
   onSuggest: (q: string) => void;
 }) {
   const bottomRef = useRef<HTMLDivElement>(null);
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [qa.messages]);
+  void capture;
 
   return (
     <div className="pt-3 border-t border-gray-100 space-y-2">
       <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">질문하기</p>
 
-      {/* Chat messages */}
-      {messages.length > 0 && (
+      {qa.messages.length > 0 && (
         <div className="space-y-2 max-h-64 overflow-y-auto">
-          {messages.map((m, i) => (
+          {qa.messages.map((m, i) => (
             <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
               <div className={`max-w-[85%] rounded-2xl px-3 py-2 text-xs leading-relaxed whitespace-pre-wrap ${
                 m.role === "user"
@@ -174,7 +183,7 @@ function QASection({
               </div>
             </div>
           ))}
-          {loading && (
+          {qa.loading && (
             <div className="flex justify-start">
               <div className="bg-gray-100 rounded-2xl rounded-bl-sm px-3 py-2">
                 <Loader2 size={12} className="animate-spin text-gray-400" />
@@ -185,8 +194,7 @@ function QASection({
         </div>
       )}
 
-      {/* Suggested questions (shown only before first message) */}
-      {messages.length === 0 && !loading && (
+      {qa.messages.length === 0 && !qa.loading && (
         <div className="flex flex-wrap gap-1.5">
           {SUGGEST_QS.map((q) => (
             <button
@@ -200,20 +208,19 @@ function QASection({
         </div>
       )}
 
-      {/* Input row */}
       <div className="flex gap-2 items-center">
         <input
           type="text"
-          value={input}
+          value={qa.input}
           onChange={(e) => onInput(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); onSend(); } }}
-          placeholder={capture.analysis?.stockName ? `${capture.analysis.stockName}에 대해 질문...` : "질문을 입력하세요..."}
+          placeholder={analysis.stockName ? `${analysis.stockName}에 대해 질문...` : "질문을 입력하세요..."}
           className="flex-1 text-xs bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 outline-none focus:border-violet-300 focus:bg-white transition-colors"
-          disabled={loading}
+          disabled={qa.loading}
         />
         <button
           onClick={onSend}
-          disabled={loading || !input.trim()}
+          disabled={qa.loading || !qa.input.trim()}
           className="p-2 bg-violet-600 text-white rounded-xl disabled:opacity-40 hover:bg-violet-700 active:bg-violet-800 transition-colors"
         >
           <Send size={14} />
@@ -233,11 +240,9 @@ export default function CaptureTab({ onDone }: Props) {
   const [briefingLoading, setBriefingLoading] = useState(false);
   const [briefingDone,    setBriefingDone]    = useState(false);
 
-  // Q&A state per slot
-  const [qa, setQa] = useState<Record<CaptureSlot, { messages: QAMessage[]; input: string; loading: boolean }>>({
-    morning: { messages: [], input: "", loading: false },
-    midday:  { messages: [], input: "", loading: false },
-    close:   { messages: [], input: "", loading: false },
+  // QA state: per slot → per stock index
+  const [qa, setQa] = useState<Record<CaptureSlot, StockQA[]>>({
+    morning: [], midday: [], close: [],
   });
 
   const fileRefs = useRef<Record<CaptureSlot, HTMLInputElement | null>>({
@@ -251,13 +256,21 @@ export default function CaptureTab({ onDone }: Props) {
       captures.forEach((c) => { next[c.slot] = { capture: c, analyzing: false, error: null }; });
       return next;
     });
+    // 기존 저장된 캡처의 QA 슬롯 초기화
+    setQa((prev) => {
+      const next = { ...prev };
+      captures.forEach((c) => {
+        const count = getAnalyses(c).length;
+        next[c.slot] = Array.from({ length: count }, () => ({ messages: [], input: "", loading: false }));
+      });
+      return next;
+    });
   }, []);
 
   // ── File handling ────────────────────────────────────────────────────────────
   async function handleFile(slot: CaptureSlot, file: File) {
     setSlots((prev) => ({ ...prev, [slot]: { ...prev[slot], analyzing: true, error: null } }));
-    // Reset Q&A for this slot
-    setQa((prev) => ({ ...prev, [slot]: { messages: [], input: "", loading: false } }));
+    setQa((prev) => ({ ...prev, [slot]: [] }));
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 60000);
@@ -274,10 +287,15 @@ export default function CaptureTab({ onDone }: Props) {
         const errData = await res.json().catch(() => ({}));
         throw new Error(errData.error || `서버 오류 (${res.status})`);
       }
-      const { analysis, deepAnalysis }: { analysis: CaptureAnalysis; deepAnalysis: CaptureDeepAnalysis } = await res.json();
-      const capture: Capture = { slot, imageData, analysis, deepAnalysis, capturedAt: new Date().toISOString() };
+      const { analyses, deepAnalyses }: { analyses: CaptureAnalysis[]; deepAnalyses: CaptureDeepAnalysis[] } = await res.json();
+      const capture: Capture = { slot, imageData, analyses, deepAnalyses, capturedAt: new Date().toISOString() };
       saveCapture(capture);
       setSlots((prev) => ({ ...prev, [slot]: { capture, analyzing: false, error: null } }));
+      // 종목 수에 맞춰 QA 슬롯 초기화
+      setQa((prev) => ({
+        ...prev,
+        [slot]: Array.from({ length: analyses.length }, () => ({ messages: [], input: "", loading: false })),
+      }));
       await generateBriefing(capture);
     } catch (e: unknown) {
       clearTimeout(timeoutId);
@@ -297,11 +315,16 @@ export default function CaptureTab({ onDone }: Props) {
       if (newCapture && !allCaptures.find((c) => c.slot === newCapture.slot)) {
         allCaptures.push(newCapture);
       }
-      const capturedStocks = allCaptures.map((c) => c.analysis).filter(Boolean);
+      // 모든 캡처의 모든 종목 수집
+      const capturedStocks = allCaptures.flatMap((c) => getAnalyses(c));
       const res = await fetch("/api/generate-briefing", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ stocks: getStocks(), capturedStocks: capturedStocks.length > 0 ? capturedStocks : undefined, useWebSearch: true }),
+        body: JSON.stringify({
+          stocks: getStocks(),
+          capturedStocks: capturedStocks.length > 0 ? capturedStocks : undefined,
+          useWebSearch: true,
+        }),
       });
       if (!res.ok) return;
       const result: DailyBriefing = await res.json();
@@ -316,71 +339,62 @@ export default function CaptureTab({ onDone }: Props) {
   function remove(slot: CaptureSlot) {
     removeCapture(slot);
     setSlots((prev) => ({ ...prev, [slot]: { capture: null, analyzing: false, error: null } }));
-    setQa((prev) => ({ ...prev, [slot]: { messages: [], input: "", loading: false } }));
+    setQa((prev) => ({ ...prev, [slot]: [] }));
     setBriefingDone(false);
   }
 
-  // ── Q&A ──────────────────────────────────────────────────────────────────────
-  async function sendQA(slot: CaptureSlot) {
-    const { input, messages } = qa[slot];
+  // ── Q&A helpers ──────────────────────────────────────────────────────────────
+  function setStockQA(slot: CaptureSlot, stockIdx: number, updater: (prev: StockQA) => StockQA) {
+    setQa((prev) => ({
+      ...prev,
+      [slot]: prev[slot].map((s, i) => i === stockIdx ? updater(s) : s),
+    }));
+  }
+
+  async function sendQAWithText(slot: CaptureSlot, stockIdx: number, text: string) {
+    const capture = slots[slot].capture;
+    const analyses = capture ? getAnalyses(capture) : [];
+    const deepAnalyses = capture ? getDeepAnalyses(capture) : [];
+    const analysis = analyses[stockIdx];
+    const deepAnalysis = deepAnalyses[stockIdx];
+
+    const prevMessages = qa[slot]?.[stockIdx]?.messages ?? [];
+    const newMessages: QAMessage[] = [...prevMessages, { role: "user", content: text }];
+
+    setStockQA(slot, stockIdx, (s) => ({ ...s, messages: newMessages, input: "", loading: true }));
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 60000);
+    try {
+      const res = await fetch("/api/capture-qa", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ analysis, deepAnalysis, messages: newMessages }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      if (!res.ok) throw new Error("답변 실패");
+      const { answer } = await res.json();
+      setStockQA(slot, stockIdx, (s) => ({
+        ...s,
+        messages: [...newMessages, { role: "assistant", content: answer }],
+        loading: false,
+      }));
+    } catch {
+      clearTimeout(timeoutId);
+      setStockQA(slot, stockIdx, (s) => ({ ...s, loading: false }));
+    }
+  }
+
+  function sendQA(slot: CaptureSlot, stockIdx: number) {
+    const input = qa[slot]?.[stockIdx]?.input ?? "";
     if (!input.trim()) return;
-    const capture = slots[slot].capture;
-    const newMessages: QAMessage[] = [...messages, { role: "user", content: input.trim() }];
-    setQa((prev) => ({ ...prev, [slot]: { messages: newMessages, input: "", loading: true } }));
-
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 60000);
-    try {
-      const res = await fetch("/api/capture-qa", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ analysis: capture?.analysis, deepAnalysis: capture?.deepAnalysis, messages: newMessages }),
-        signal: controller.signal,
-      });
-      clearTimeout(timeoutId);
-      if (!res.ok) throw new Error("답변 실패");
-      const { answer } = await res.json();
-      setQa((prev) => ({
-        ...prev,
-        [slot]: { ...prev[slot], messages: [...newMessages, { role: "assistant", content: answer }], loading: false },
-      }));
-    } catch {
-      clearTimeout(timeoutId);
-      setQa((prev) => ({ ...prev, [slot]: { ...prev[slot], loading: false } }));
-    }
+    sendQAWithText(slot, stockIdx, input.trim());
   }
 
-  function handleSuggest(slot: CaptureSlot, q: string) {
-    setQa((prev) => ({ ...prev, [slot]: { ...prev[slot], input: q } }));
-    setTimeout(() => sendQAWithText(slot, q), 0);
-  }
-
-  async function sendQAWithText(slot: CaptureSlot, text: string) {
-    const { messages } = qa[slot];
-    const capture = slots[slot].capture;
-    const newMessages: QAMessage[] = [...messages, { role: "user", content: text }];
-    setQa((prev) => ({ ...prev, [slot]: { messages: newMessages, input: "", loading: true } }));
-
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 60000);
-    try {
-      const res = await fetch("/api/capture-qa", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ analysis: capture?.analysis, deepAnalysis: capture?.deepAnalysis, messages: newMessages }),
-        signal: controller.signal,
-      });
-      clearTimeout(timeoutId);
-      if (!res.ok) throw new Error("답변 실패");
-      const { answer } = await res.json();
-      setQa((prev) => ({
-        ...prev,
-        [slot]: { ...prev[slot], messages: [...newMessages, { role: "assistant", content: answer }], loading: false },
-      }));
-    } catch {
-      clearTimeout(timeoutId);
-      setQa((prev) => ({ ...prev, [slot]: { ...prev[slot], loading: false } }));
-    }
+  function handleSuggest(slot: CaptureSlot, stockIdx: number, q: string) {
+    setStockQA(slot, stockIdx, (s) => ({ ...s, input: q }));
+    setTimeout(() => sendQAWithText(slot, stockIdx, q), 0);
   }
 
   // ── Render ────────────────────────────────────────────────────────────────────
@@ -390,7 +404,6 @@ export default function CaptureTab({ onDone }: Props) {
         <span className="font-semibold text-sm text-gray-900">오늘 캡처</span>
       </div>
 
-      {/* Briefing status */}
       {briefingLoading && (
         <div className="mx-4 mt-4 flex items-center gap-2 bg-violet-50 border border-violet-200 rounded-2xl px-4 py-3">
           <Loader2 size={14} className="animate-spin text-violet-600 shrink-0" />
@@ -408,7 +421,9 @@ export default function CaptureTab({ onDone }: Props) {
         {SLOTS.map((slot) => {
           const { label, time, emoji } = SLOT_META[slot];
           const { capture, analyzing, error } = slots[slot];
-          const slotQA = qa[slot];
+          const analyses   = capture ? getAnalyses(capture)     : [];
+          const deeps      = capture ? getDeepAnalyses(capture) : [];
+
           return (
             <div key={slot} className="bg-white border border-gray-100 rounded-2xl shadow-sm overflow-hidden">
               {/* Slot header */}
@@ -479,9 +494,9 @@ export default function CaptureTab({ onDone }: Props) {
 
               {/* Captured + analyzed state */}
               {!analyzing && capture && (
-                <div className="p-4 space-y-3">
-                  {/* Stock overview row */}
-                  <div className="flex gap-3">
+                <div className="p-4 space-y-4">
+                  {/* 캡처 이미지 썸네일 */}
+                  <div className="flex items-center gap-3">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
                       src={capture.imageData}
@@ -489,48 +504,77 @@ export default function CaptureTab({ onDone }: Props) {
                       className="w-14 h-20 object-cover rounded-xl shrink-0 cursor-pointer"
                       onClick={() => window.open(capture.imageData)}
                     />
-                    <div className="flex-1 min-w-0">
+                    <div>
                       <div className="flex items-center gap-1 mb-1">
                         <CheckCircle2 size={12} className="text-emerald-500 shrink-0" />
                         <span className="text-[11px] font-semibold text-emerald-600">분석 완료</span>
                       </div>
-                      {capture.analysis?.stockName && (
-                        <p className="font-bold text-sm text-gray-900 truncate">{capture.analysis.stockName}</p>
-                      )}
-                      {capture.analysis?.currentPrice && (
-                        <p className="text-xs text-gray-500 mt-0.5">{capture.analysis.currentPrice}</p>
-                      )}
-                      {capture.analysis?.returnRate && (
-                        <p className={`text-base font-black mt-0.5 ${
-                          capture.analysis.returnRate.startsWith("-") ? "text-blue-600" : "text-red-600"
-                        }`}>
-                          {capture.analysis.returnRate}
-                        </p>
-                      )}
-                      {capture.analysis?.avgPrice && (
-                        <p className="text-xs text-gray-400">평단 {capture.analysis.avgPrice}</p>
-                      )}
-                      {capture.analysis?.quantity && (
-                        <p className="text-xs text-gray-400">{capture.analysis.quantity}</p>
-                      )}
+                      <p className="text-xs text-gray-400">
+                        {analyses.length}개 종목 인식됨
+                      </p>
                     </div>
                   </div>
 
-                  {/* Deep analysis */}
-                  {capture.deepAnalysis && <DeepCard deep={capture.deepAnalysis} />}
+                  {/* 종목별 카드 */}
+                  {analyses.map((analysis, stockIdx) => {
+                    const deep    = deeps[stockIdx];
+                    const stockQA = qa[slot]?.[stockIdx] ?? { messages: [], input: "", loading: false };
 
-                  {/* Q&A */}
-                  {capture.analysis?.stockName && (
-                    <QASection
-                      capture={capture}
-                      messages={slotQA.messages}
-                      input={slotQA.input}
-                      loading={slotQA.loading}
-                      onInput={(v) => setQa((prev) => ({ ...prev, [slot]: { ...prev[slot], input: v } }))}
-                      onSend={() => sendQA(slot)}
-                      onSuggest={(q) => handleSuggest(slot, q)}
-                    />
-                  )}
+                    return (
+                      <div
+                        key={stockIdx}
+                        className={`rounded-xl border border-gray-100 p-3 space-y-3 ${
+                          analyses.length > 1 ? "bg-gray-50/50" : ""
+                        }`}
+                      >
+                        {/* 종목 기본 정보 */}
+                        <div className="space-y-0.5">
+                          {analyses.length > 1 && (
+                            <p className="text-[10px] font-bold text-gray-300 uppercase tracking-wider mb-1">
+                              종목 {stockIdx + 1}
+                            </p>
+                          )}
+                          {analysis.stockName && (
+                            <p className="font-bold text-sm text-gray-900">{analysis.stockName}</p>
+                          )}
+                          {analysis.currentPrice && (
+                            <p className="text-xs text-gray-500">{analysis.currentPrice}</p>
+                          )}
+                          {analysis.returnRate && (
+                            <p className={`text-base font-black ${
+                              analysis.returnRate.startsWith("-") ? "text-blue-600" : "text-red-600"
+                            }`}>
+                              {analysis.returnRate}
+                            </p>
+                          )}
+                          <div className="flex gap-3 flex-wrap">
+                            {analysis.avgPrice && (
+                              <p className="text-xs text-gray-400">평단 {analysis.avgPrice}</p>
+                            )}
+                            {analysis.quantity && (
+                              <p className="text-xs text-gray-400">{analysis.quantity}</p>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* 심층 분석 */}
+                        {deep && <DeepCard deep={deep} />}
+
+                        {/* Q&A */}
+                        {analysis.stockName && (
+                          <QASection
+                            capture={capture}
+                            analysis={analysis}
+                            deep={deep}
+                            qa={stockQA}
+                            onInput={(v) => setStockQA(slot, stockIdx, (s) => ({ ...s, input: v }))}
+                            onSend={() => sendQA(slot, stockIdx)}
+                            onSuggest={(q) => handleSuggest(slot, stockIdx, q)}
+                          />
+                        )}
+                      </div>
+                    );
+                  })}
 
                   {/* Re-upload */}
                   <button
