@@ -69,6 +69,25 @@ export interface CaptureAnalysis {
   appType?: string;
 }
 
+export interface CaptureNewsItem {
+  title: string;
+  summary: string;
+  source?: string;
+  url?: string;
+}
+
+export interface CaptureDeepAnalysis {
+  opinion: "buy" | "hold" | "sell";
+  opinionReasons: string[];
+  targetPrice?: string | null;
+  stopLossPrice?: string | null;
+  risks: string[];
+  chartAnalysis: string;
+  marketContext: string;
+  newsItems: CaptureNewsItem[];
+  summary: string;
+}
+
 export type CaptureSlot = "morning" | "midday" | "close";
 
 export const SLOT_META: Record<CaptureSlot, { label: string; time: string; emoji: string }> = {
@@ -81,6 +100,7 @@ export interface Capture {
   slot: CaptureSlot;
   imageData: string;
   analysis?: CaptureAnalysis;
+  deepAnalysis?: CaptureDeepAnalysis;
   capturedAt: string;
 }
 
