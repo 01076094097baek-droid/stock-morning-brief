@@ -4,6 +4,34 @@ import { CaptureAnalysis } from "@/lib/types";
 
 export const maxDuration = 60;
 
+/**
+ * Claude 응답 텍스트에서 첫 번째 완전한 JSON 객체를 추출합니다.
+ * - 마크다운 코드 펜스(```json ... ```) 제거
+ * - 중괄호 depth를 직접 추적하므로 JSON 외 텍스트가 앞뒤에 있어도 안전합니다.
+ */
+function extractFirstJSON(text: string): string | null {
+  // 마크다운 코드 펜스 제거
+  const clean = text.replace(/```(?:json)?\s*/g, "").replace(/```/g, "");
+
+  const start = clean.indexOf("{");
+  if (start === -1) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+
+  for (let i = start; i < clean.length; i++) {
+    const ch = clean[i];
+    if (escape)          { escape = false; continue; }
+    if (ch === "\\" && inString) { escape = true;  continue; }
+    if (ch === '"')      { inString = !inString;   continue; }
+    if (inString)        { continue; }
+    if (ch === "{")      { depth++; }
+    if (ch === "}")      { depth--; if (depth === 0) return clean.slice(start, i + 1); }
+  }
+  return null;
+}
+
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 const PROMPT = `당신은 주식 MTS(모바일 트레이딩 시스템) 화면 분석 전문가입니다.
@@ -60,10 +88,10 @@ export async function POST(req: NextRequest) {
     });
 
     const text = response.content[0].type === "text" ? response.content[0].text : "";
-    const match = text.match(/\{[\s\S]*\}/);
-    if (!match) throw new Error("분석 결과를 파싱할 수 없습니다");
+    const jsonStr = extractFirstJSON(text);
+    if (!jsonStr) throw new Error("분석 결과를 파싱할 수 없습니다");
 
-    const raw = JSON.parse(match[0]);
+    const raw = JSON.parse(jsonStr);
     // Strip null values
     const analysis: CaptureAnalysis = Object.fromEntries(
       Object.entries(raw).filter(([, v]) => v !== null && v !== "")
