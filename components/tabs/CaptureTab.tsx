@@ -42,22 +42,33 @@ export default function CaptureTab({ onDone }: Props) {
 
   async function handleFile(slot: CaptureSlot, file: File) {
     setSlots((prev) => ({ ...prev, [slot]: { ...prev[slot], analyzing: true, error: null } }));
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 60000);
     try {
       const imageData = await compressImage(file);
       const res = await fetch("/api/analyze-capture", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ imageData }),
+        signal: controller.signal,
       });
-      if (!res.ok) throw new Error("분석 실패");
+      clearTimeout(timeoutId);
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || `서버 오류 (${res.status})`);
+      }
       const analysis: CaptureAnalysis = await res.json();
       const capture: Capture = { slot, imageData, analysis, capturedAt: new Date().toISOString() };
       saveCapture(capture);
       setSlots((prev) => ({ ...prev, [slot]: { capture, analyzing: false, error: null } }));
       // Auto-generate briefing after analysis
       await generateBriefing(capture);
-    } catch {
-      setSlots((prev) => ({ ...prev, [slot]: { ...prev[slot], analyzing: false, error: "분석 실패. 다시 시도해주세요." } }));
+    } catch (e: unknown) {
+      clearTimeout(timeoutId);
+      const msg = e instanceof Error
+        ? (e.name === "AbortError" ? "분석 시간 초과 (60초). 다시 시도해주세요." : e.message)
+        : "분석 실패. 다시 시도해주세요.";
+      setSlots((prev) => ({ ...prev, [slot]: { ...prev[slot], analyzing: false, error: msg } }));
     }
   }
 
@@ -143,11 +154,18 @@ export default function CaptureTab({ onDone }: Props) {
               <input
                 type="file"
                 accept="image/*"
+                multiple
                 className="hidden"
                 ref={(el) => { fileRefs.current[slot] = el; }}
                 onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) handleFile(slot, file);
+                  const files = Array.from(e.target.files || []);
+                  if (files.length === 0) return;
+                  const slotOrder: CaptureSlot[] = ["morning", "midday", "close"];
+                  const startIdx = slotOrder.indexOf(slot);
+                  files.forEach((file, i) => {
+                    const targetSlot = slotOrder[startIdx + i];
+                    if (targetSlot) handleFile(targetSlot, file);
+                  });
                   e.target.value = "";
                 }}
               />

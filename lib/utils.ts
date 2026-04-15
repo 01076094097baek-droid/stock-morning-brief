@@ -24,7 +24,7 @@ export async function compressImage(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => {
-      const MAX = 900;
+      const MAX = 1200;
       let { width, height } = img;
       if (width > MAX || height > MAX) {
         if (width > height) { height = Math.round((height * MAX) / width); width = MAX; }
@@ -34,8 +34,26 @@ export async function compressImage(file: File): Promise<string> {
       canvas.width = width;
       canvas.height = height;
       canvas.getContext("2d")!.drawImage(img, 0, 0, width, height);
-      resolve(canvas.toDataURL("image/jpeg", 0.82));
+
+      // 1차 압축 (0.85 품질)
+      let result = canvas.toDataURL("image/jpeg", 0.85);
+
+      // base64 크기가 3MB 초과 시 추가 압축
+      const MAX_B64_BYTES = 3 * 1024 * 1024;
+      if (result.length > MAX_B64_BYTES) {
+        result = canvas.toDataURL("image/jpeg", 0.6);
+      }
+      // 여전히 크면 해상도도 줄임
+      if (result.length > MAX_B64_BYTES) {
+        const canvas2 = document.createElement("canvas");
+        canvas2.width = Math.round(width * 0.6);
+        canvas2.height = Math.round(height * 0.6);
+        canvas2.getContext("2d")!.drawImage(img, 0, 0, canvas2.width, canvas2.height);
+        result = canvas2.toDataURL("image/jpeg", 0.6);
+      }
+
       URL.revokeObjectURL(img.src);
+      resolve(result);
     };
     img.onerror = reject;
     img.src = URL.createObjectURL(file);

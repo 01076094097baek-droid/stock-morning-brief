@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { CaptureAnalysis } from "@/lib/types";
 
+export const maxDuration = 60;
+
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 const PROMPT = `당신은 주식 MTS(모바일 트레이딩 시스템) 화면 분석 전문가입니다.
@@ -69,7 +71,8 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(analysis);
   } catch (e: unknown) {
-    console.error("캡처 분석 오류:", e);
-    return NextResponse.json({ error: e instanceof Error ? e.message : "서버 오류" }, { status: 500 });
+    const msg = e instanceof Error ? e.message : "서버 오류";
+    console.error("캡처 분석 오류:", msg, e);
+    return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
