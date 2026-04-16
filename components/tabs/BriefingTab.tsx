@@ -7,10 +7,11 @@ import { judgmentStyle, issueTagStyle, stockTypeLabel } from "@/lib/utils";
 import { RefreshCw, Zap, TrendingUp, AlertTriangle, XCircle, CalendarDays, Star } from "lucide-react";
 
 export default function BriefingTab() {
-  const [data,    setData]    = useState<DailyBriefing | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error,   setError]   = useState<string | null>(null);
-  const [isAuto,  setIsAuto]  = useState(false);
+  const [data,           setData]           = useState<DailyBriefing | null>(null);
+  const [loading,        setLoading]        = useState(false);
+  const [loadingSection, setLoadingSection] = useState<string | null>(null);
+  const [error,          setError]          = useState<string | null>(null);
+  const [isAuto,         setIsAuto]         = useState(false);
 
   useEffect(() => {
     const local = getBriefing();
@@ -32,28 +33,87 @@ export default function BriefingTab() {
 
   async function generate() {
     setLoading(true);
+    setLoadingSection("시장 요약");
     setError(null);
+    setData(null);
+
+    const today = new Date().toISOString().split("T")[0];
+    const now   = new Date().toISOString();
+
     try {
-      const stocks = getStocks();
+      const stocks   = getStocks();
       const captures = getTodayCaptures();
-      const capturedStocks = captures.map((c) => c.analysis).filter(Boolean);
+      // 하위 호환: analyses(신규) 또는 analysis(구) 모두 지원
+      const capturedStocks = captures.flatMap((c) =>
+        c.analyses?.length ? c.analyses : c.analysis ? [c.analysis] : []
+      );
+
       const res = await fetch("/api/generate-briefing", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           stocks,
           capturedStocks: capturedStocks.length > 0 ? capturedStocks : undefined,
-          useWebSearch: true,
         }),
       });
-      if (!res.ok) throw new Error((await res.json()).error || "생성 실패");
-      const result: DailyBriefing = await res.json();
-      saveBriefing(result);
-      setData(result);
+      if (!res.ok || !res.body) throw new Error("생성 실패");
+
+      const reader  = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      // 섹션별로 채워 나가는 부분 브리핑
+      let partial: DailyBriefing = {
+        date: today, generatedAt: now,
+        marketSummary: "", stockBriefings: [], recommendedStocks: [], news: [],
+      };
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const chunk = JSON.parse(line) as {
+              type: string;
+              marketSummary?: string;
+              stockBriefings?: DailyBriefing["stockBriefings"];
+              news?: DailyBriefing["news"];
+              recommendedStocks?: DailyBriefing["recommendedStocks"];
+              briefing?: DailyBriefing;
+              message?: string;
+            };
+
+            if (chunk.type === "market") {
+              partial = { ...partial, marketSummary: chunk.marketSummary || "" };
+              setData({ ...partial });
+              setLoadingSection("종목 분석");
+            } else if (chunk.type === "stocks") {
+              partial = { ...partial, stockBriefings: chunk.stockBriefings || [], news: chunk.news || [] };
+              setData({ ...partial });
+              setLoadingSection("추천 종목");
+            } else if (chunk.type === "recommend") {
+              partial = { ...partial, recommendedStocks: chunk.recommendedStocks || [] };
+              setData({ ...partial });
+              setLoadingSection(null);
+            } else if (chunk.type === "done" && chunk.briefing) {
+              saveBriefing(chunk.briefing);
+              setData(chunk.briefing);
+            } else if (chunk.type === "error") {
+              setError(chunk.message || "오류가 발생했습니다");
+            }
+          } catch { /* 파싱 실패 무시 */ }
+        }
+      }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "오류가 발생했습니다");
     } finally {
       setLoading(false);
+      setLoadingSection(null);
     }
   }
 
@@ -81,7 +141,7 @@ export default function BriefingTab() {
           className="flex items-center gap-1.5 bg-violet-600 text-white text-xs font-semibold px-3 py-1.5 rounded-full disabled:opacity-60"
         >
           <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
-          {loading ? "생성 중..." : "새로 생성"}
+          {loading ? (loadingSection ? `${loadingSection} 생성 중...` : "생성 중...") : "새로 생성"}
         </button>
       </div>
 

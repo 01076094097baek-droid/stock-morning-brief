@@ -20,7 +20,8 @@ interface StockQA { messages: QAMessage[]; input: string; loading: boolean; }
 
 interface SlotState {
   capture: Capture | null;
-  analyzing: boolean;
+  analyzing: boolean;    // Step 1: 이미지에서 종목 추출 중
+  deepLoading: boolean;  // Step 2: 심층 분석 중 (종목은 이미 표시됨)
   error: string | null;
 }
 
@@ -234,9 +235,9 @@ function QASection({
 // ── Main component ─────────────────────────────────────────────────────────────
 export default function CaptureTab({ onDone }: Props) {
   const [slots, setSlots] = useState<Record<CaptureSlot, SlotState>>({
-    morning: { capture: null, analyzing: false, error: null },
-    midday:  { capture: null, analyzing: false, error: null },
-    close:   { capture: null, analyzing: false, error: null },
+    morning: { capture: null, analyzing: false, deepLoading: false, error: null },
+    midday:  { capture: null, analyzing: false, deepLoading: false, error: null },
+    close:   { capture: null, analyzing: false, deepLoading: false, error: null },
   });
   const [briefingLoading, setBriefingLoading] = useState(false);
   const [briefingDone,    setBriefingDone]    = useState(false);
@@ -254,7 +255,7 @@ export default function CaptureTab({ onDone }: Props) {
     const captures = getTodayCaptures();
     setSlots((prev) => {
       const next = { ...prev };
-      captures.forEach((c) => { next[c.slot] = { capture: c, analyzing: false, error: null }; });
+      captures.forEach((c) => { next[c.slot] = { capture: c, analyzing: false, deepLoading: false, error: null }; });
       return next;
     });
     // 기존 저장된 캡처의 QA 슬롯 초기화
@@ -268,46 +269,73 @@ export default function CaptureTab({ onDone }: Props) {
     });
   }, []);
 
-  // ── File handling ────────────────────────────────────────────────────────────
+  // ── File handling (2단계) ────────────────────────────────────────────────────
   async function handleFile(slot: CaptureSlot, file: File) {
-    setSlots((prev) => ({ ...prev, [slot]: { ...prev[slot], analyzing: true, error: null } }));
+    setSlots((prev) => ({ ...prev, [slot]: { ...prev[slot], analyzing: true, deepLoading: false, error: null } }));
     setQa((prev) => ({ ...prev, [slot]: [] }));
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 60000);
     try {
       const imageData = await compressImage(file);
-      const res = await fetch("/api/analyze-capture", {
+
+      // ── Step 1: 이미지에서 종목 추출 (약 5초) ──────────────────────────────
+      const res1 = await fetch("/api/analyze-capture", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ imageData }),
-        signal: controller.signal,
       });
-      clearTimeout(timeoutId);
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.error || `서버 오류 (${res.status})`);
+      if (!res1.ok) {
+        const errData = await res1.json().catch(() => ({}));
+        throw new Error(errData.error || `서버 오류 (${res1.status})`);
       }
-      const { analyses, deepAnalyses }: { analyses: CaptureAnalysis[]; deepAnalyses: CaptureDeepAnalysis[] } = await res.json();
-      const capture: Capture = { slot, imageData, analyses, deepAnalyses, capturedAt: new Date().toISOString() };
+      const { analyses }: { analyses: CaptureAnalysis[] } = await res1.json();
+
+      // 종목 즉시 표시 (deepAnalyses는 비어 있는 상태로 시작)
+      const capture: Capture = { slot, imageData, analyses, deepAnalyses: [], capturedAt: new Date().toISOString() };
       saveCapture(capture);
-      setSlots((prev) => ({ ...prev, [slot]: { capture, analyzing: false, error: null } }));
-      // 종목 수에 맞춰 QA 슬롯 초기화
+      setSlots((prev) => ({ ...prev, [slot]: { capture, analyzing: false, deepLoading: true, error: null } }));
       setQa((prev) => ({
         ...prev,
         [slot]: Array.from({ length: analyses.length }, () => ({ messages: [], input: "", loading: false })),
       }));
-      await generateBriefing(capture);
+
+      // 브리핑 생성은 병렬로 시작 (종목 데이터만 필요)
+      generateBriefing(capture);
+
+      // ── Step 2: 종목별 심층 분석 (병렬, 각 약 5-7초) ──────────────────────
+      await Promise.all(
+        analyses.map(async (analysis, idx) => {
+          try {
+            const res2 = await fetch("/api/analyze-capture/deep", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ analysis }),
+            });
+            if (!res2.ok) return;
+            const deep: CaptureDeepAnalysis = await res2.json();
+            // 종목별로 완료되는 즉시 UI 업데이트
+            setSlots((prev) => {
+              const cur = prev[slot];
+              if (!cur.capture) return prev;
+              const newDeep = [...(cur.capture.deepAnalyses || [])];
+              newDeep[idx] = deep;
+              const updated = { ...cur.capture, deepAnalyses: newDeep };
+              saveCapture(updated);
+              return { ...prev, [slot]: { ...cur, capture: updated } };
+            });
+          } catch (e) {
+            console.error(`종목 ${idx} 심층분석 오류:`, e);
+          }
+        })
+      );
+
+      setSlots((prev) => ({ ...prev, [slot]: { ...prev[slot], deepLoading: false } }));
     } catch (e: unknown) {
-      clearTimeout(timeoutId);
-      const msg = e instanceof Error
-        ? (e.name === "AbortError" ? "분석 시간 초과 (60초). 다시 시도해주세요." : e.message)
-        : "분석 실패. 다시 시도해주세요.";
-      setSlots((prev) => ({ ...prev, [slot]: { ...prev[slot], analyzing: false, error: msg } }));
+      const msg = e instanceof Error ? e.message : "분석 실패. 다시 시도해주세요.";
+      setSlots((prev) => ({ ...prev, [slot]: { ...prev[slot], analyzing: false, deepLoading: false, error: msg } }));
     }
   }
 
-  // ── Briefing generation ──────────────────────────────────────────────────────
+  // ── Briefing generation (스트리밍) ───────────────────────────────────────────
   async function generateBriefing(newCapture?: Capture) {
     setBriefingLoading(true);
     setBriefingDone(false);
@@ -316,22 +344,44 @@ export default function CaptureTab({ onDone }: Props) {
       if (newCapture && !allCaptures.find((c) => c.slot === newCapture.slot)) {
         allCaptures.push(newCapture);
       }
-      // 모든 캡처의 모든 종목 수집
-      const capturedStocks = allCaptures.flatMap((c) => getAnalyses(c));
+      const capturedStocks = allCaptures.flatMap((c) =>
+        c.analyses?.length ? c.analyses : c.analysis ? [c.analysis] : []
+      );
+
       const res = await fetch("/api/generate-briefing", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           stocks: getStocks(),
           capturedStocks: capturedStocks.length > 0 ? capturedStocks : undefined,
-          useWebSearch: true,
         }),
       });
-      if (!res.ok) return;
-      const result: DailyBriefing = await res.json();
-      saveBriefing(result);
-      setBriefingDone(true);
-      setTimeout(() => onDone?.(), 1500);
+      if (!res.ok || !res.body) return;
+
+      const reader  = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const chunk = JSON.parse(line);
+            if (chunk.type === "done" && chunk.briefing) {
+              saveBriefing(chunk.briefing as DailyBriefing);
+              setBriefingDone(true);
+              setTimeout(() => onDone?.(), 1500);
+            }
+          } catch { /* 파싱 실패 무시 */ }
+        }
+      }
+    } catch {
+      // 브리핑 실패는 비치명적 – 조용히 처리
     } finally {
       setBriefingLoading(false);
     }
@@ -339,7 +389,7 @@ export default function CaptureTab({ onDone }: Props) {
 
   function remove(slot: CaptureSlot) {
     removeCapture(slot);
-    setSlots((prev) => ({ ...prev, [slot]: { capture: null, analyzing: false, error: null } }));
+    setSlots((prev) => ({ ...prev, [slot]: { capture: null, analyzing: false, deepLoading: false, error: null } }));
     setQa((prev) => ({ ...prev, [slot]: [] }));
     setBriefingDone(false);
   }
@@ -421,7 +471,7 @@ export default function CaptureTab({ onDone }: Props) {
       <div className="px-4 py-4 space-y-4">
         {SLOTS.map((slot) => {
           const { label, time, emoji } = SLOT_META[slot];
-          const { capture, analyzing, error } = slots[slot];
+          const { capture, analyzing, deepLoading, error } = slots[slot];
           const analyses   = capture ? getAnalyses(capture)     : [];
           const deeps      = capture ? getDeepAnalyses(capture) : [];
 
@@ -463,13 +513,13 @@ export default function CaptureTab({ onDone }: Props) {
                 }}
               />
 
-              {/* Analyzing state */}
+              {/* Analyzing state (Step 1: 종목 추출) */}
               {analyzing && (
                 <div className="flex flex-col items-center gap-3 py-10">
                   <Loader2 size={28} className="animate-spin text-violet-500" />
                   <div className="text-center">
-                    <p className="text-xs font-semibold text-gray-600">AI 심층 분석 중...</p>
-                    <p className="text-[11px] text-gray-400 mt-0.5">웹 검색 포함 · 최대 60초</p>
+                    <p className="text-xs font-semibold text-gray-600">종목 인식 중...</p>
+                    <p className="text-[11px] text-gray-400 mt-0.5">이미지에서 종목 추출 중</p>
                   </div>
                 </div>
               )}
@@ -560,6 +610,12 @@ export default function CaptureTab({ onDone }: Props) {
 
                         {/* 심층 분석 */}
                         {deep && <DeepCard deep={deep} />}
+                        {!deep && deepLoading && (
+                          <div className="flex items-center gap-2 py-2 text-[11px] text-gray-400">
+                            <Loader2 size={12} className="animate-spin shrink-0" />
+                            심층 분석 중...
+                          </div>
+                        )}
 
                         {/* Q&A */}
                         {analysis.stockName && (
