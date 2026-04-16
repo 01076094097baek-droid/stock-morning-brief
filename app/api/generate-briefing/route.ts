@@ -39,6 +39,21 @@ async function callClaude(prompt: string, maxTokens: number): Promise<string> {
   return resp.content[0].type === "text" ? resp.content[0].text : "";
 }
 
+// 웹 검색 포함 호출 (실시간 시장 데이터 조회)
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function callClaudeWithSearch(prompt: string, maxTokens: number, maxSearches: number): Promise<string> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const resp = await (client.beta as any).messages.create({
+    model: "claude-sonnet-4-6",
+    max_tokens: maxTokens,
+    betas: ["web-search-2025-03-05"],
+    tools: [{ type: "web_search_20250305", name: "web_search", max_uses: maxSearches }],
+    messages: [{ role: "user", content: prompt }],
+  });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return resp.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
+}
+
 export async function POST(req: NextRequest) {
   const {
     stocks = [],
@@ -92,19 +107,21 @@ export async function POST(req: NextRequest) {
       let recommendedStocks: RecommendedStock[] = [];
 
       try {
-        // ── 1단계: 시장 요약 (빠름, ~3-5초) ──────────────────────────────────
-        const marketText = await callClaude(
-          `오늘(${today}) 한국·미국 주식시장 전반을 3문장으로 요약하세요.
+        // ── 1단계: 시장 요약 (웹 검색, ~8-12초) ─────────────────────────────
+        const marketText = await callClaudeWithSearch(
+          `오늘(${today}) 실시간 웹 검색으로 한국·미국 주식시장 현황을 조사하고 3문장으로 요약하세요.
+지수(코스피/코스닥/나스닥/S&P500), 주요 이슈, 섹터 동향을 포함하세요.
 JSON으로만: {"marketSummary": "요약 3문장"}`,
-          300
+          400,
+          2
         );
         const m = safeParseJSON(marketText);
-        marketSummary = (m.marketSummary as string) || marketText.slice(0, 300);
+        marketSummary = (m.marketSummary as string) || marketText.slice(0, 400);
         send({ type: "market", marketSummary });
 
-        // ── 2단계: 종목별 분석 + 뉴스 (~5-8초) ───────────────────────────────
-        const stocksText = await callClaude(
-          `오늘(${today}) 보유 종목 분석과 관련 뉴스를 작성하세요.
+        // ── 2단계: 종목별 분석 + 뉴스 (웹 검색, ~10-15초) ───────────────────
+        const stocksText = await callClaudeWithSearch(
+          `오늘(${today}) 웹 검색으로 아래 보유 종목의 최신 뉴스와 시황을 조사해 분석하세요.
 
 보유 종목:
 ${stockList}
@@ -117,7 +134,7 @@ JSON으로만:
       "stockName": "종목명",
       "country": "KR 또는 US",
       "judgment": "hold 또는 monitor 또는 sell",
-      "summary": "오늘의 판단 2문장",
+      "summary": "오늘의 판단 2문장 (최신 뉴스 반영)",
       "newsPreview": ["뉴스제목1", "뉴스제목2"],
       "currentPrice": null,
       "returnRate": null
@@ -128,9 +145,9 @@ JSON으로만:
       "id": "n1",
       "stockId": "${idPrefix}N 또는 null",
       "stockName": "종목명 또는 null",
-      "title": "뉴스 제목",
+      "title": "실제 뉴스 제목",
       "summary": "1문장 요약",
-      "url": "",
+      "url": "실제 URL 또는 빈 문자열",
       "source": "출처",
       "publishedAt": "${now}",
       "category": "KR 또는 US 또는 MACRO"
@@ -139,7 +156,8 @@ JSON으로만:
 }
 
 규칙: stockBriefings는 종목 없으면 빈 배열, news는 3-5개`,
-          1200
+          1500,
+          3
         );
         const s = safeParseJSON(stocksText);
         stockBriefings = ((s.stockBriefings as StockBriefing[]) || []).map(
@@ -154,7 +172,7 @@ JSON으로만:
         }));
         send({ type: "stocks", stockBriefings, news });
 
-        // ── 3단계: 추천 종목 (~3-5초) ────────────────────────────────────────
+        // ── 3단계: 추천 종목 (학습 데이터, ~3-5초) ───────────────────────────
         const recommendText = await callClaude(
           `오늘(${today}) 주목할 만한 종목 3개를 추천하세요.
 

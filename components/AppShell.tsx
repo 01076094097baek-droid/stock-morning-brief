@@ -7,14 +7,16 @@ import BriefingTab from "./tabs/BriefingTab";
 import NewsTab from "./tabs/NewsTab";
 import CaptureTab from "./tabs/CaptureTab";
 import SettingsTab from "./tabs/SettingsTab";
-import { LayoutDashboard, Newspaper, Camera, Settings, Lock } from "lucide-react";
+import StatsTab from "./tabs/StatsTab";
+import { LayoutDashboard, Newspaper, Camera, Settings, Lock, BarChart2 } from "lucide-react";
 
-type Tab = "briefing" | "news" | "capture" | "settings";
+type Tab = "briefing" | "news" | "capture" | "stats" | "settings";
 
 const TABS = [
   { id: "briefing",  label: "브리핑", Icon: LayoutDashboard },
-  { id: "news",      label: "뉴스",   Icon: Newspaper },
   { id: "capture",   label: "캡처",   Icon: Camera },
+  { id: "stats",     label: "통계",   Icon: BarChart2 },
+  { id: "news",      label: "뉴스",   Icon: Newspaper },
   { id: "settings",  label: "설정",   Icon: Settings },
 ] as const;
 
@@ -48,8 +50,9 @@ export default function AppShell() {
 
       <main className="flex-1 overflow-y-auto">
         {tab === "briefing" && <BriefingTab />}
-        {tab === "news"     && <NewsTab />}
         {tab === "capture"  && <CaptureTab onDone={() => setTab("briefing")} />}
+        {tab === "stats"    && <StatsTab />}
+        {tab === "news"     && <NewsTab />}
         {tab === "settings" && <SettingsTab />}
       </main>
 
