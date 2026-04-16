@@ -165,6 +165,7 @@ function QASection({
   const bottomRef = useRef<HTMLDivElement>(null);
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [qa.messages]);
   void capture;
+  void deep;
 
   return (
     <div className="pt-3 border-t border-gray-100 space-y-2">
